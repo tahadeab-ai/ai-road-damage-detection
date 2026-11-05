@@ -88,13 +88,25 @@ def upload_apk_to_release(
     
     upload_headers = headers.copy()
     upload_headers["Content-Type"] = "application/vnd.android.package-archive"
+    upload_headers["Content-Length"] = str(apk_path.stat().st_size)
+    print(f"Uploading '{asset_name}' ({apk_size_mb:.2f} MB, {apk_path.stat().st_size} bytes) to {tag_name}...", flush=True)
 
-    with open(apk_path, "rb") as f:
-        upload_res = requests.post(upload_url, headers=upload_headers, data=f, timeout=300)
-    upload_res.raise_for_status()
+    try:
+        # Prefer gh CLI if available for robust streamed upload
+        gh_cmd = ["gh", "release", "upload", tag_name, f"{apk_path}#{asset_name}", "--repo", repository, "--clobber"]
+        print(f"Executing: {' '.join(gh_cmd)}", flush=True)
+        subprocess.run(gh_cmd, check=True)
+        download_url = f"https://github.com/{repository}/releases/download/{tag_name}/{asset_name}"
+        print(f"\nSuccessfully attached APK to release via gh: {download_url}", flush=True)
+        return download_url
+    except Exception as e:
+        print(f"gh CLI upload fallback to REST API: {e}", flush=True)
+        with open(apk_path, "rb") as f:
+            upload_res = requests.post(upload_url, headers=upload_headers, data=f, timeout=300)
+        upload_res.raise_for_status()
 
     download_url = upload_res.json().get("browser_download_url")
-    print(f"\nSuccessfully attached APK to release: {download_url}")
+    print(f"\nSuccessfully attached APK to release: {download_url}", flush=True)
     return download_url
 
 
