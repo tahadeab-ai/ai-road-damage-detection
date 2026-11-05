@@ -150,11 +150,11 @@ annotated_img = visualizer.draw_detections(
 Pre-trained weights and benchmark artifacts are automatically delivered to GitHub Releases using `src/road_damage/utils/github_release.py`.
 
 ### Published Release Assets (`v1.0.0-weights`):
-- [`best.pt`](https://github.com/OWNER/REPO/releases/download/v1.0.0-weights/best.pt) — PyTorch FP32/FP16 checkpoint of top YOLO11n detector (5.25 MB).
-- [`model.onnx`](https://github.com/OWNER/REPO/releases/download/v1.0.0-weights/model.onnx) — Exported dynamic ONNX model compiled with Opset 17 and ONNX-Slim (10.45 MB).
-- [`confusion_matrix.png`](https://github.com/OWNER/REPO/releases/download/v1.0.0-weights/confusion_matrix.png) — Normalized confusion matrix across background and target damage classes.
-- [`results.png`](https://github.com/OWNER/REPO/releases/download/v1.0.0-weights/results.png) — Multi-epoch training curves, bounding box losses, and Precision-Recall dynamics.
-- [`evaluation_summary.json`](https://github.com/OWNER/REPO/releases/download/v1.0.0-weights/evaluation_summary.json) — Full machine-readable benchmark report containing GPU/CPU latency and per-class AP.
+- [`best.pt`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/best.pt) — PyTorch FP32/FP16 checkpoint of top YOLO11n detector (5.25 MB).
+- [`model.onnx`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/model.onnx) — Exported dynamic ONNX model compiled with Opset 17 and ONNX-Slim (10.45 MB).
+- [`confusion_matrix.png`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/confusion_matrix.png) — Normalized confusion matrix across background and target damage classes.
+- [`results.png`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/results.png) — Multi-epoch training curves, bounding box losses, and Precision-Recall dynamics.
+- [`evaluation_summary.json`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/evaluation_summary.json) — Full machine-readable benchmark report containing GPU/CPU latency and per-class AP.
 
 ---
 
@@ -168,7 +168,7 @@ This project enforces a strict separation of concerns:
 
 ```bash
 # 1. Clone repository
-!git clone https://github.com/your-username/ai-road-damage-detection.git /content/ai-road-damage-detection
+!git clone https://github.com/tahadeab-ai/ai-road-damage-detection.git /content/ai-road-damage-detection
 %cd /content/ai-road-damage-detection
 
 # 2. Install requirements & road_damage package
