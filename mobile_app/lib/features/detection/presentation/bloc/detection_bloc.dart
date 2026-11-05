@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
 import '../../../../core/utils/image_processor.dart';
+import '../../../../core/utils/snapshot_capture_service.dart';
 import '../../../../core/utils/temporal_filter.dart';
 import '../../../history/data/repositories/hazard_repository.dart';
 import '../../../telemetry/services/gps_service.dart';
@@ -132,7 +133,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final rawDetections = await tfliteEngine.runInference(
         float32Buffer,
         confThreshold: state.confidenceThreshold,
-        iouThreshold: 0.40,
+        iouThreshold: 0.35,
         roadRoiTop: 0.35,
       );
 
@@ -162,12 +163,22 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // 7. Persist confirmed hazard incidents with Spatio-Temporal deduplication
+      // 7. Persist confirmed hazard incidents with Spatio-Temporal deduplication & evidence snapshot
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
       if (confirmedTracks.isNotEmpty) {
         for (final track in confirmedTracks) {
           final det = track.toDetectionResult();
+
+          // Evidence snapshot capture if confirmed with conf >= 0.70 while moving
+          String? snapshotPath;
+          if (track.confidence >= 0.70 && state.gpsData.speedKmh >= 5.0) {
+            snapshotPath = await SnapshotCaptureService.captureHazardSnapshot(
+              rgbBuffer: float32Buffer,
+              detection: det,
+            );
+          }
+
           final hazard = RoadHazard.fromDetection(
             id: '${track.trackingId}_${det.classId}_${now.millisecondsSinceEpoch ~/ 1000}',
             detection: det,
@@ -175,6 +186,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
             longitude: state.gpsData.longitude,
             speedKmh: state.gpsData.speedKmh,
             address: state.gpsData.address,
+            snapshotPath: snapshotPath,
           );
           final logged = await hazardRepository.logHazard(hazard);
           if (logged) loggedCount++;

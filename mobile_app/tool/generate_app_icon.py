@@ -5,15 +5,18 @@ from PIL import Image, ImageDraw, ImageFilter
 def create_app_icon(output_path="assets/icon/app_icon.png"):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     size = 1024
-    img = Image.new("RGBA", (size, size), (10, 15, 29, 255)) # Dark slate base
+    
+    # 1. Base: Modern charcoal backdrop (#1A1D24)
+    img = Image.new("RGBA", (size, size), (26, 29, 36, 255))
     draw = ImageDraw.Draw(img)
 
-    # 1. Subtle radial glow in background
+    cx, cy = size // 2, size // 2
+
+    # 2. Subtle radial glow behind the emblem
     glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
-    cx, cy = size // 2, size // 2
-    for r in range(400, 50, -10):
-        alpha = int(25 * (1.0 - (r / 400.0)))
+    for r in range(420, 40, -12):
+        alpha = int(28 * (1.0 - (r / 420.0)))
         glow_draw.ellipse(
             [cx - r, cy - r, cx + r, cy + r],
             fill=(0, 242, 254, alpha)
@@ -21,7 +24,7 @@ def create_app_icon(output_path="assets/icon/app_icon.png"):
     img = Image.alpha_composite(img, glow)
     draw = ImageDraw.Draw(img)
 
-    # 2. Protective Hexagonal Outer Shield
+    # 3. Outer Protective Shield / Hexagon
     def get_hex_points(center_x, center_y, radius):
         points = []
         for i in range(6):
@@ -31,50 +34,55 @@ def create_app_icon(output_path="assets/icon/app_icon.png"):
             points.append((px, py))
         return points
 
-    outer_hex = get_hex_points(cx, cy, 420)
-    inner_hex = get_hex_points(cx, cy, 390)
+    outer_hex = get_hex_points(cx, cy, 440)
+    inner_hex = get_hex_points(cx, cy, 410)
 
-    # Shield fill
-    draw.polygon(outer_hex, fill=(15, 23, 42, 240))
-    # Shield border neon cyan
-    draw.polygon(outer_hex, outline=(0, 242, 254, 255), width=8)
-    draw.polygon(inner_hex, outline=(30, 41, 59, 255), width=4)
+    # Shield body (rich carbon)
+    draw.polygon(outer_hex, fill=(32, 36, 46, 255))
+    # Border: Crisp cyber cyan
+    draw.polygon(outer_hex, outline=(0, 242, 254, 255), width=10)
+    draw.polygon(inner_hex, outline=(48, 54, 69, 255), width=4)
 
-    # 3. High-Tech Perspective Roadway
-    # Vanishing point
-    vx, vy = cx, cy - 60
-    # Road edges expanding downwards
+    # 4. Crisp Perspective Roadway Gradient
+    vx, vy = cx, cy - 80
     road_poly = [
-        (vx - 40, vy),
-        (vx + 40, vy),
-        (cx + 260, cy + 320),
-        (cx - 260, cy + 320),
+        (vx - 50, vy),
+        (vx + 50, vy),
+        (cx + 280, cy + 340),
+        (cx - 280, cy + 340),
     ]
-    draw.polygon(road_poly, fill=(24, 32, 47, 255))
-    draw.line([(vx - 40, vy), (cx - 260, cy + 320)], fill=(0, 242, 254, 180), width=6)
-    draw.line([(vx + 40, vy), (cx + 260, cy + 320)], fill=(0, 242, 254, 180), width=6)
+    draw.polygon(road_poly, fill=(18, 21, 28, 255))
 
-    # Dashed center lane markings in road perspective
-    lane_segments = [
-        (vy + 20, vy + 50, 4),
-        (vy + 80, vy + 130, 8),
-        (vy + 170, vy + 240, 14),
-        (vy + 280, vy + 320, 20),
+    # Flanking high-visibility Hazard Warning Yellow (#FFC107) edge curbs
+    draw.line([(vx - 50, vy), (cx - 280, cy + 340)], fill=(255, 193, 7, 255), width=12)
+    draw.line([(vx + 50, vy), (cx + 280, cy + 340)], fill=(255, 193, 7, 255), width=12)
+
+    # Center lane divider dashes (Perspective road markings)
+    lane_dashes = [
+        (vy + 20, vy + 55, 6),
+        (vy + 90, vy + 145, 12),
+        (vy + 185, vy + 260, 18),
+        (vy + 300, vy + 340, 24),
     ]
-    for top_y, bot_y, w in lane_segments:
-        draw.line([(cx, top_y), (cx, bot_y)], fill=(245, 158, 11, 255), width=w)
+    for top_y, bot_y, w in lane_dashes:
+        draw.line([(cx, top_y), (cx, bot_y)], fill=(255, 255, 255, 240), width=w)
 
-    # 4. Neon AI Damage Detection Target (Corner Brackets & Reticle)
-    # Target Box on road
-    tx, ty = cx, cy + 140
-    tw, th = 200, 100
+    # 5. Cyber Cyan Scan Reticle & Radar Arcs
+    scan_arc_1 = [cx - 310, cy - 310, cx + 310, cy + 310]
+    draw.arc(scan_arc_1, start=205, end=335, fill=(0, 242, 254, 220), width=6)
+    scan_arc_2 = [cx - 360, cy - 360, cx + 360, cy + 360]
+    draw.arc(scan_arc_2, start=215, end=325, fill=(0, 242, 254, 120), width=4)
+
+    # 6. Prominent Road Damage Target Reticle (Hazard Warning Yellow + Cyber Cyan)
+    tx, ty = cx, cy + 150
+    tw, th = 220, 110
     bx1, by1 = tx - tw // 2, ty - th // 2
     bx2, by2 = tx + tw // 2, ty + th // 2
 
-    # Corner brackets (Neon Amber / Orange)
-    bracket_color = (245, 158, 11, 255)
-    b_len = 35
-    b_width = 8
+    # High-vis corner brackets (#FFC107 Yellow)
+    bracket_color = (255, 193, 7, 255)
+    b_len = 40
+    b_width = 10
 
     # Top-Left
     draw.line([(bx1, by1 + b_len), (bx1, by1)], fill=bracket_color, width=b_width)
@@ -89,19 +97,19 @@ def create_app_icon(output_path="assets/icon/app_icon.png"):
     draw.line([(bx2 - b_len, by2), (bx2, by2)], fill=bracket_color, width=b_width)
     draw.line([(bx2, by2), (bx2, by2 - b_len)], fill=bracket_color, width=b_width)
 
-    # Crosshair in target center
-    draw.line([(tx - 25, ty), (tx + 25, ty)], fill=(239, 68, 68, 240), width=4)
-    draw.line([(tx, ty - 25), (tx, ty + 25)], fill=(239, 68, 68, 240), width=4)
-    draw.ellipse([tx - 10, ty - 10, tx + 10, ty + 10], outline=(239, 68, 68, 240), width=3)
+    # Cyan Target Crosshair
+    draw.line([(tx - 30, ty), (tx + 30, ty)], fill=(0, 242, 254, 255), width=5)
+    draw.line([(tx, ty - 30), (tx, ty + 30)], fill=(0, 242, 254, 255), width=5)
+    draw.ellipse([tx - 12, ty - 12, tx + 12, ty + 12], outline=(0, 242, 254, 255), width=4)
 
-    # 5. Glowing AI Radar Arc / Scan Waves
-    scan_arc_box = [cx - 280, cy - 280, cx + 280, cy + 280]
-    draw.arc(scan_arc_box, start=200, end=340, fill=(0, 242, 254, 200), width=5)
-    scan_arc_box2 = [cx - 320, cy - 320, cx + 320, cy + 320]
-    draw.arc(scan_arc_box2, start=210, end=330, fill=(0, 242, 254, 100), width=3)
+    # Semi-transparent red warning target fill
+    target_fill = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    target_draw = ImageDraw.Draw(target_fill)
+    target_draw.rectangle([bx1, by1, bx2, by2], fill=(239, 68, 68, 55))
+    img = Image.alpha_composite(img, target_fill)
 
     img.save(output_path, "PNG")
-    print(f"Generated app icon saved to: {output_path}")
+    print(f"Professional high-contrast ADAS app icon saved to: {output_path}")
 
 if __name__ == "__main__":
     create_app_icon()

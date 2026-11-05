@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/constants/colors.dart';
+import '../../../../core/localization/app_localizations.dart';
 import '../bloc/detection_bloc.dart';
 import '../bloc/detection_event.dart';
 import '../bloc/detection_state.dart';
@@ -242,36 +243,65 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (_) {
-        return Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'EDGE AI DIAGNOSTICS',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 1.0),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-              const Divider(height: 24),
-              _buildMetricTile('Runtime Acceleration', 'Android NNAPI (GPU Delegate)'),
-              _buildMetricTile('Input Tensor Shape', '[1, 640, 640, 3] Float32'),
-              _buildMetricTile('Inference Latency', '${state.inferenceLatencyMs} ms'),
-              _buildMetricTile('Framerate Output', '${state.fps} FPS (Thermal Guarded)'),
-              _buildMetricTile('Confirmed Tracking Pool', '${state.trackedDetections.length} Active Tracks'),
-              _buildMetricTile('Vehicle Speed Gate', state.isLowSpeed ? 'STANDBY (<8 km/h)' : 'ACTIVE MONITORING'),
-              _buildMetricTile('Total Logged Hazards', '${state.totalLoggedCount} Incidents'),
-              _buildMetricTile('Active Location', state.gpsData.address),
-              const SizedBox(height: 16),
-            ],
+        return Directionality(
+          textDirection: AppStrings.direction,
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      AppStrings.diagnostics,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                const Divider(height: 24),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'تسريع المعالجة' : 'Runtime Acceleration',
+                  'Android NNAPI (GPU Delegate)',
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'أبعاد مصفوفة الإدخال' : 'Input Tensor Shape',
+                  '[1, 640, 640, 3] Float32',
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'زمن الاستجابة' : 'Inference Latency',
+                  '${state.inferenceLatencyMs} ${AppStrings.msUnit}',
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'معدل الإطارات' : 'Framerate Output',
+                  '${state.fps} ${AppStrings.fpsUnit}',
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'المسارات النشطة المؤكدة' : 'Confirmed Active Tracks',
+                  '${state.trackedDetections.where((t) => t.isConfirmed).length}',
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'حالة الحركة' : 'Vehicle Movement Gate',
+                  state.isLowSpeed
+                      ? AppStrings.standby
+                      : (AppStrings.isArabic ? 'مراقبة نشطة' : 'ACTIVE MONITORING'),
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'إجمالي الأضرار المسجلة' : 'Total Logged Hazards',
+                  '${state.totalLoggedCount}',
+                ),
+                _buildMetricTile(
+                  AppStrings.isArabic ? 'الموقع الحالي' : 'Active Location',
+                  state.gpsData.address,
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         );
       },

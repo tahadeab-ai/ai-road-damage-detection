@@ -36,6 +36,9 @@ class RoadHazard extends Equatable {
   @HiveField(9)
   final String? snapshotPath;
 
+  /// Alias for snapshotPath for backward & evidence capture compatibility.
+  String? get imagePath => snapshotPath;
+
   const RoadHazard({
     required this.id,
     required this.defectClass,

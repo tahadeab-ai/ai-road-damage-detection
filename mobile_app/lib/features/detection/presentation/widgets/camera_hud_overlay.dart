@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../../../core/constants/colors.dart';
+import '../../../../core/localization/app_localizations.dart';
 import '../bloc/detection_state.dart';
 
 class CameraHudOverlay extends StatelessWidget {
@@ -24,21 +25,24 @@ class CameraHudOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        children: [
-          // 1. Top Automotive Telemetry HUD Header
-          _buildTopHudBar(context),
+    return Directionality(
+      textDirection: AppStrings.direction,
+      child: SafeArea(
+        child: Column(
+          children: [
+            // 1. Top Automotive Telemetry HUD Header
+            _buildTopHudBar(context),
 
-          // 2. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
-          if (state.criticalHazardAlert != null)
-            _buildCriticalWarningBanner(context),
+            // 2. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
+            if (state.criticalHazardAlert != null)
+              _buildCriticalWarningBanner(context),
 
-          const Spacer(),
+            const Spacer(),
 
-          // 3. Bottom HUD Automotive Console
-          _buildBottomControlBar(context),
-        ],
+            // 3. Bottom HUD Automotive Console
+            _buildBottomControlBar(context),
+          ],
+        ),
       ),
     );
   }
@@ -47,15 +51,22 @@ class CameraHudOverlay extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: AppColors.surfaceGlass,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppColors.borderGlow, width: 1),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: AppColors.borderGlow, width: 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -63,7 +74,7 @@ class CameraHudOverlay extends StatelessWidget {
                 // Vehicle Speedometer & Standby Badge
                 Row(
                   children: [
-                    const Icon(Icons.speed, color: AppColors.cyanAccent, size: 20),
+                    const Icon(Icons.speed_rounded, color: AppColors.cyanAccent, size: 22),
                     const SizedBox(width: 6),
                     RichText(
                       text: TextSpan(
@@ -77,9 +88,9 @@ class CameraHudOverlay extends StatelessWidget {
                               fontFamily: 'monospace',
                             ),
                           ),
-                          const TextSpan(
-                            text: ' KM/H',
-                            style: TextStyle(
+                          TextSpan(
+                            text: ' ${AppStrings.speedUnit}',
+                            style: const TextStyle(
                               color: AppColors.textSecondary,
                               fontSize: 10,
                               fontWeight: FontWeight.w700,
@@ -90,20 +101,23 @@ class CameraHudOverlay extends StatelessWidget {
                     ),
                     if (state.isLowSpeed) ...[
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.warning.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: AppColors.warning, width: 0.8),
-                        ),
-                        child: const Text(
-                          'STANDBY',
-                          style: TextStyle(
-                            color: AppColors.warning,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
+                      Tooltip(
+                        message: AppStrings.standbyTooltip,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.warning.withValues(alpha: 0.20),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppColors.warning, width: 1),
+                          ),
+                          child: Text(
+                            AppStrings.standby,
+                            style: const TextStyle(
+                              color: AppColors.warning,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
                           ),
                         ),
                       ),
@@ -111,13 +125,13 @@ class CameraHudOverlay extends StatelessWidget {
                   ],
                 ),
 
-                // Latency & Inference Performance
+                // Latency & Framerate Telemetry Tag
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.border, width: 0.5),
+                    border: Border.all(color: AppColors.border, width: 0.6),
                   ),
                   child: Row(
                     children: [
@@ -131,7 +145,7 @@ class CameraHudOverlay extends StatelessWidget {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${state.inferenceLatencyMs}ms • ${state.fps} FPS',
+                        '${state.inferenceLatencyMs}${AppStrings.msUnit} • ${state.fps} ${AppStrings.fpsUnit}',
                         style: const TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 11,
@@ -147,17 +161,17 @@ class CameraHudOverlay extends StatelessWidget {
                 Row(
                   children: [
                     Icon(
-                      state.gpsData.isGpsLocked ? Icons.gps_fixed : Icons.gps_not_fixed,
+                      state.gpsData.isGpsLocked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
                       color: state.gpsData.isGpsLocked ? AppColors.successGps : AppColors.warning,
-                      size: 16,
+                      size: 17,
                     ),
                     const SizedBox(width: 8),
 
                     // Active Confirmed Hazard Count Badge
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                       decoration: BoxDecoration(
-                        color: AppColors.d40Pothole.withValues(alpha: 0.2),
+                        color: AppColors.d40Pothole.withValues(alpha: 0.22),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(color: AppColors.d40Pothole, width: 1),
                       ),
@@ -212,23 +226,26 @@ class CameraHudOverlay extends StatelessWidget {
 
   Widget _buildCriticalWarningBanner(BuildContext context) {
     final alert = state.criticalHazardAlert!;
+    final defectName = AppStrings.getDefectName(alert.classId);
+    final percent = (alert.confidence * 100).toInt();
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             decoration: BoxDecoration(
               color: AppColors.d40Pothole.withValues(alpha: 0.88),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(18),
               border: Border.all(color: Colors.white, width: 1.5),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.d40Pothole.withValues(alpha: 0.5),
-                  blurRadius: 20,
-                  spreadRadius: 2,
+                  color: AppColors.d40Pothole.withValues(alpha: 0.55),
+                  blurRadius: 22,
+                  spreadRadius: 3,
                 ),
               ],
             ),
@@ -241,17 +258,17 @@ class CameraHudOverlay extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'CRITICAL ROAD HAZARD DETECTED',
+                        AppStrings.criticalHazardTitle,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.95),
-                          fontSize: 10,
+                          fontSize: 11,
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 1.2,
+                          letterSpacing: 0.8,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${alert.className.toUpperCase()} Ahead (${(alert.confidence * 100).toStringAsFixed(0)}% Conf)',
+                        AppStrings.criticalHazardSubtitle(defectName, percent),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 15,
@@ -289,7 +306,7 @@ class CameraHudOverlay extends StatelessWidget {
                 // Incident Log Navigation
                 IconButton(
                   icon: const Icon(Icons.history_rounded, color: AppColors.textPrimary, size: 24),
-                  tooltip: 'Incident History',
+                  tooltip: AppStrings.incidentLogs,
                   onPressed: onOpenHistory,
                 ),
 
@@ -300,7 +317,7 @@ class CameraHudOverlay extends StatelessWidget {
                     color: state.isTorchOn ? AppColors.warning : AppColors.textSecondary,
                     size: 24,
                   ),
-                  tooltip: 'Night Vision Torch',
+                  tooltip: AppStrings.nightVision,
                   onPressed: onToggleTorch,
                 ),
 
@@ -308,7 +325,7 @@ class CameraHudOverlay extends StatelessWidget {
                 GestureDetector(
                   onTap: onToggleStreaming,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: state.isStreaming
@@ -318,7 +335,7 @@ class CameraHudOverlay extends StatelessWidget {
                       borderRadius: BorderRadius.circular(30),
                       boxShadow: [
                         BoxShadow(
-                          color: (state.isStreaming ? Colors.red : AppColors.cyanAccent).withValues(alpha: 0.4),
+                          color: (state.isStreaming ? Colors.red : AppColors.cyanAccent).withValues(alpha: 0.45),
                           blurRadius: 16,
                           spreadRadius: 1,
                         ),
@@ -333,7 +350,7 @@ class CameraHudOverlay extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          state.isStreaming ? 'PAUSE AI' : 'RESUME AI',
+                          state.isStreaming ? AppStrings.pauseAi : AppStrings.resumeAi,
                           style: TextStyle(
                             color: state.isStreaming ? Colors.white : Colors.black,
                             fontSize: 13,
@@ -349,7 +366,7 @@ class CameraHudOverlay extends StatelessWidget {
                 // Analytics & Device Diagnostics
                 IconButton(
                   icon: const Icon(Icons.analytics_outlined, color: AppColors.textPrimary, size: 24),
-                  tooltip: 'Device Telemetry & Analytics',
+                  tooltip: AppStrings.diagnostics,
                   onPressed: onOpenAnalytics,
                 ),
               ],
