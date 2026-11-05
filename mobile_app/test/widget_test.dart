@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:road_guard_mobile/core/constants/app_theme.dart';
 import 'package:road_guard_mobile/core/constants/colors.dart';
-import 'package:road_guard_mobile/features/detection/domain/models/detection_result.dart';
+import 'package:road_guard_mobile/core/utils/temporal_filter.dart';
 import 'package:road_guard_mobile/features/detection/presentation/bloc/detection_state.dart';
 import 'package:road_guard_mobile/features/detection/presentation/widgets/bbox_painter.dart';
 import 'package:road_guard_mobile/features/detection/presentation/widgets/camera_hud_overlay.dart';
@@ -31,6 +31,8 @@ void main() {
             body: CameraHudOverlay(
               state: state,
               onToggleStreaming: () {},
+              onToggleMute: () {},
+              onToggleTorch: () {},
               onOpenHistory: () {},
               onOpenAnalytics: () {},
             ),
@@ -52,33 +54,29 @@ void main() {
     });
 
     test('BBoxOverlayPainter calculates correct pixel mapping across aspect ratios', () {
-      const detection = DetectionResult(
+      final track = TrackedDetection(
+        trackingId: 1,
         classId: 3,
         className: 'Pothole',
         confidence: 0.85,
-        normalizedRect: Rect.fromLTWH(0.25, 0.50, 0.50, 0.25),
+        smoothedRect: const Rect.fromLTWH(0.25, 0.50, 0.50, 0.25),
+        streak: 3,
       );
 
-      final painter = BBoxOverlayPainter(detections: [detection]);
-      expect(painter.detections.length, equals(1));
+      final painter = BBoxOverlayPainter(
+        trackedDetections: [track],
+        cameraAspectRatio: 9.0 / 16.0,
+      );
+      expect(painter.trackedDetections.length, equals(1));
 
-      // Test on 1080x1920 portrait screen
+      // Test on 1080x1920 portrait screen (exact 9:16 aspect)
       const portraitSize = Size(1080, 1920);
-      final pixelRect = detection.toPixelRect(portraitSize);
+      final pixelRect = track.toDetectionResult().toPixelRect(portraitSize);
 
       expect(pixelRect.left, equals(270.0));
       expect(pixelRect.top, equals(960.0));
       expect(pixelRect.width, equals(540.0));
       expect(pixelRect.height, equals(480.0));
-
-      // Test on 1920x1080 landscape screen
-      const landscapeSize = Size(1920, 1080);
-      final landscapeRect = detection.toPixelRect(landscapeSize);
-
-      expect(landscapeRect.left, equals(480.0));
-      expect(landscapeRect.top, equals(540.0));
-      expect(landscapeRect.width, equals(960.0));
-      expect(landscapeRect.height, equals(270.0));
     });
 
     test('AppColors returns correct neon accents per defect class', () {

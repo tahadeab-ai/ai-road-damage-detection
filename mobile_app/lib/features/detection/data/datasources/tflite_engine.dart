@@ -58,8 +58,9 @@ class TfliteEngine {
   /// Runs inference on a normalized [1, 640, 640, 3] Float32 buffer.
   Future<List<DetectionResult>> runInference(
     Float32List inputBuffer, {
-    double confThreshold = 0.35,
-    double iouThreshold = 0.45,
+    double confThreshold = 0.55,
+    double iouThreshold = 0.40,
+    double roadRoiTop = 0.35,
   }) async {
     if (!_isInitialized) {
       await initialize();
@@ -87,7 +88,7 @@ class TfliteEngine {
         _interpreter!.run(inputReshaped, outputBuffer);
 
         stopwatch.stop();
-        return _parseYolo11Output(outputBuffer[0], confThreshold, iouThreshold);
+        return _parseYolo11Output(outputBuffer[0], confThreshold, iouThreshold, roadRoiTop: roadRoiTop);
       } catch (e) {
         debugPrint('[TfliteEngine] Fallback due to tensor parsing notice: $e');
       }
@@ -102,8 +103,9 @@ class TfliteEngine {
   List<DetectionResult> _parseYolo11Output(
     List<List<double>> outputMatrix,
     double confThreshold,
-    double iouThreshold,
-  ) {
+    double iouThreshold, {
+    double roadRoiTop = 0.35,
+  }) {
     final List<DetectionResult> candidates = [];
     final int numPredictions = outputMatrix[0].length; // 8400
 
@@ -113,6 +115,11 @@ class TfliteEngine {
       final double cy = outputMatrix[1][i];
       final double w = outputMatrix[2][i];
       final double h = outputMatrix[3][i];
+
+      // Suppress detections outside Road Surface ROI (top 35% is sky/ceiling/horizon)
+      if (cy < roadRoiTop) {
+        continue;
+      }
 
       // Find highest class confidence among the 4 damage classes
       double maxScore = -1.0;

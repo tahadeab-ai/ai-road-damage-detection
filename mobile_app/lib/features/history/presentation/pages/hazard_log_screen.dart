@@ -98,10 +98,10 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
       ),
       body: Column(
         children: [
-          // Filter Chips
+          // Filter Chips Bar
           _buildFilterBar(),
 
-          // List of Hazard Cards
+          // List of Incident Cards
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -156,95 +156,120 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
     final Color defectColor = AppColors.getColorForDefect(hazard.classId);
     final String formattedDate = DateFormat('yyyy-MM-dd • HH:mm:ss').format(hazard.timestamp);
 
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Defect Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: defectColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: defectColor, width: 1),
-                  ),
-                  child: Text(
-                    hazard.defectClass.toUpperCase(),
-                    style: TextStyle(
-                      color: defectColor,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                // Confidence Score
-                Text(
-                  '${(hazard.confidence * 100).toStringAsFixed(0)}% Conf',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border, width: 1),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Categorical Left Neon Color Strip
+              Container(
+                width: 6,
+                color: defectColor,
+              ),
 
-            // Road Address
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined, size: 16, color: AppColors.textSecondary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    hazard.address,
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
+              // Incident Details
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Defect Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: defectColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: defectColor, width: 1),
+                            ),
+                            child: Text(
+                              hazard.defectClass.toUpperCase(),
+                              style: TextStyle(
+                                color: defectColor,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          // Confidence Score
+                          Text(
+                            '${(hazard.confidence * 100).toStringAsFixed(0)}% Conf',
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
 
-            // Telemetry: Coordinates, Speed & Timestamp
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${hazard.latitude.toStringAsFixed(5)}, ${hazard.longitude.toStringAsFixed(5)}',
-                  style: const TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 11,
-                    fontFamily: 'monospace',
+                      // Road Address
+                      Row(
+                        children: [
+                          const Icon(Icons.location_on_outlined, size: 16, color: AppColors.textSecondary),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              hazard.address,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+
+                      // Telemetry: Coordinates, Speed & Timestamp
+                      Row(
+                        children: [
+                          const Icon(Icons.navigation_outlined, size: 14, color: AppColors.textSecondary),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${hazard.latitude.toStringAsFixed(5)}, ${hazard.longitude.toStringAsFixed(5)}',
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11, fontFamily: 'monospace'),
+                          ),
+                          const Spacer(),
+                          const Icon(Icons.speed, size: 14, color: AppColors.textSecondary),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${hazard.speedKmh.toStringAsFixed(0)} km/h',
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11, fontFamily: 'monospace'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        formattedDate,
+                        style: TextStyle(
+                          color: AppColors.textSecondary.withValues(alpha: 0.7),
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  '${hazard.speedKmh.toStringAsFixed(0)} KM/H',
-                  style: const TextStyle(
-                    color: AppColors.cyanAccent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 16),
-            Text(
-              formattedDate,
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -255,21 +280,16 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.check_circle_outline_rounded, size: 64, color: AppColors.textMuted.withValues(alpha: 0.5)),
+          Icon(Icons.shield_outlined, size: 64, color: AppColors.textSecondary.withValues(alpha: 0.3)),
           const SizedBox(height: 16),
           const Text(
-            'NO ANOMALIES RECORDED',
-            style: TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.0,
-            ),
+            'NO HAZARDS LOGGED YET',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 1.0),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           const Text(
-            'Road defects identified in driving mode will be geotagged here',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            'Verified road damage incidents will appear here automatically',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
         ],
       ),
@@ -279,19 +299,19 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
   Future<void> _confirmClearAll() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (context) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Clear All Incident Logs?'),
-        content: const Text('This will permanently delete all stored road hazards and telemetry data from your device.'),
+        title: const Text('Clear All Logs?'),
+        content: const Text('This will permanently delete all logged road damage events from local device storage.'),
         actions: [
           TextButton(
-            child: const Text('Cancel'),
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('CANCEL'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('Delete All'),
-            onPressed: () => Navigator.of(ctx).pop(true),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('CLEAR ALL'),
           ),
         ],
       ),
@@ -299,7 +319,7 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
 
     if (confirmed == true) {
       await _repository.clearAll();
-      _loadHazards();
+      await _loadHazards();
     }
   }
 }

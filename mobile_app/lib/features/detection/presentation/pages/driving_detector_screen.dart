@@ -67,7 +67,7 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
 
       if (!mounted) return;
 
-      // Start stream
+      // Start image stream
       await _cameraController!.startImageStream((CameraImage image) {
         if (mounted) {
           context.read<DetectionBloc>().add(ProcessCameraFrame(image));
@@ -78,6 +78,19 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     } catch (e) {
       debugPrint('[DrivingDetectorScreen] Camera init notice: $e');
       setState(() => _isCameraReady = false);
+    }
+  }
+
+  double _getPreviewAspectRatio(BuildContext context) {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return 9.0 / 16.0;
+    }
+    final rawAspect = _cameraController!.value.aspectRatio;
+    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+    if (isPortrait) {
+      return rawAspect > 1.0 ? (1.0 / rawAspect) : rawAspect;
+    } else {
+      return rawAspect < 1.0 ? (1.0 / rawAspect) : rawAspect;
     }
   }
 
@@ -93,42 +106,82 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: BlocBuilder<DetectionBloc, DetectionState>(
+      body: BlocConsumer<DetectionBloc, DetectionState>(
+        listenWhen: (prev, curr) => prev.isTorchOn != curr.isTorchOn,
+        listener: (context, state) async {
+          if (_cameraController != null && _cameraController!.value.isInitialized) {
+            try {
+              await _cameraController!.setFlashMode(
+                state.isTorchOn ? FlashMode.torch : FlashMode.off,
+              );
+            } catch (e) {
+              debugPrint('[DrivingDetectorScreen] Flash mode toggle notice: $e');
+            }
+          }
+        },
         builder: (context, state) {
+          final previewAspect = _getPreviewAspectRatio(context);
+
           return Stack(
             fit: StackFit.expand,
             children: [
-              // 1. Camera Viewport or Fallback Simulator Background
+              // 1. Fullscreen Camera Viewport with BoxFit.cover (Edge-to-Edge, Zero Letterboxing)
               if (_isCameraReady && _cameraController != null)
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: _cameraController!.value.aspectRatio,
-                    child: CameraPreview(_cameraController!),
+                ClipRect(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final screenAspect = constraints.maxWidth / constraints.maxHeight;
+                      double scale = 1.0;
+                      if (screenAspect > previewAspect) {
+                        scale = screenAspect / previewAspect;
+                      } else {
+                        scale = previewAspect / screenAspect;
+                      }
+
+                      return Transform.scale(
+                        scale: scale,
+                        child: Center(
+                          child: AspectRatio(
+                            aspectRatio: previewAspect,
+                            child: CameraPreview(_cameraController!),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 )
               else
                 _buildSimulationCameraViewport(),
 
-              // 2. Bounding Box Custom Painter Overlay
+              // 2. Temporally Smoothed Bounding Box Overlay with Subpixel Geometry Alignment
               AnimatedBuilder(
                 animation: _animController,
                 builder: (context, _) {
                   return CustomPaint(
                     painter: BBoxOverlayPainter(
-                      detections: state.isStreaming ? state.detections : [],
+                      trackedDetections: state.isStreaming ? state.trackedDetections : [],
+                      fallbackDetections: state.isStreaming ? state.detections : [],
                       animationValue: _animController.value,
+                      cameraAspectRatio: previewAspect,
+                      roadRoiTop: 0.35,
                     ),
                   );
                 },
               ),
 
-              // 3. Cyberpunk Heads-Up Display (HUD)
+              // 3. Automotive Heads-Up Display (HUD)
               CameraHudOverlay(
                 state: state,
                 onToggleStreaming: () {
                   context
                       .read<DetectionBloc>()
                       .add(ToggleDetectionStreaming(!state.isStreaming));
+                },
+                onToggleMute: () {
+                  context.read<DetectionBloc>().add(ToggleMuteAudio());
+                },
+                onToggleTorch: () {
+                  context.read<DetectionBloc>().add(ToggleTorchMode());
                 },
                 onOpenHistory: () {
                   Navigator.of(context).push(
@@ -211,8 +264,10 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
               const Divider(height: 24),
               _buildMetricTile('Runtime Acceleration', 'Android NNAPI (GPU Delegate)'),
               _buildMetricTile('Input Tensor Shape', '[1, 640, 640, 3] Float32'),
-              _buildMetricTile('Current Latency', '${state.inferenceLatencyMs} ms'),
+              _buildMetricTile('Inference Latency', '${state.inferenceLatencyMs} ms'),
               _buildMetricTile('Framerate Output', '${state.fps} FPS (Thermal Guarded)'),
+              _buildMetricTile('Confirmed Tracking Pool', '${state.trackedDetections.length} Active Tracks'),
+              _buildMetricTile('Vehicle Speed Gate', state.isLowSpeed ? 'STANDBY (<8 km/h)' : 'ACTIVE MONITORING'),
               _buildMetricTile('Total Logged Hazards', '${state.totalLoggedCount} Incidents'),
               _buildMetricTile('Active Location', state.gpsData.address),
               const SizedBox(height: 16),

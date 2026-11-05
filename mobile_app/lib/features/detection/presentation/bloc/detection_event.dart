@@ -46,3 +46,7 @@ class ChangeConfidenceThreshold extends DetectionEvent {
   @override
   List<Object?> get props => [threshold];
 }
+
+class ToggleMuteAudio extends DetectionEvent {}
+
+class ToggleTorchMode extends DetectionEvent {}

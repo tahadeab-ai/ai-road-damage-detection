@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/alert_cooldown_manager.dart';
 import '../../../../core/utils/image_processor.dart';
+import '../../../../core/utils/temporal_filter.dart';
 import '../../../history/data/repositories/hazard_repository.dart';
 import '../../../telemetry/services/gps_service.dart';
 import '../../data/datasources/tflite_engine.dart';
@@ -15,12 +15,17 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
   final TfliteEngine tfliteEngine;
   final GpsService gpsService;
   final HazardRepository hazardRepository;
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AlertCooldownManager _alertManager = AlertCooldownManager();
+  final TemporalFilter _temporalFilter = TemporalFilter(
+    iouThreshold: 0.35,
+    emaAlpha: 0.60,
+    persistenceMs: 350,
+    confirmationStreak: 3,
+  );
 
   StreamSubscription<GpsData>? _gpsSubscription;
   bool _isProcessingFrame = false;
   DateTime _lastFrameTime = DateTime.now();
-  DateTime _lastAlertTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   DetectionBloc({
     required this.tfliteEngine,
@@ -32,6 +37,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     on<UpdateTelemetryData>(_onUpdateTelemetry);
     on<ToggleDetectionStreaming>(_onToggleStreaming);
     on<ChangeConfidenceThreshold>(_onChangeConfidenceThreshold);
+    on<ToggleMuteAudio>(_onToggleMute);
+    on<ToggleTorchMode>(_onToggleTorch);
   }
 
   Future<void> _onInitialize(
@@ -55,6 +62,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         isStreaming: true,
         totalLoggedCount: totalLogged,
         gpsData: gpsService.currentGpsData,
+        isMuted: _alertManager.isMuted,
       ));
     } catch (e) {
       // Retain active state with fallback
@@ -73,9 +81,14 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     ToggleDetectionStreaming event,
     Emitter<DetectionState> emit,
   ) {
+    if (!event.isStreaming) {
+      _temporalFilter.reset();
+      _alertManager.reset();
+    }
     emit(state.copyWith(
       isStreaming: event.isStreaming,
       detections: event.isStreaming ? state.detections : [],
+      trackedDetections: event.isStreaming ? state.trackedDetections : [],
     ));
   }
 
@@ -84,6 +97,21 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     Emitter<DetectionState> emit,
   ) {
     emit(state.copyWith(confidenceThreshold: event.threshold));
+  }
+
+  void _onToggleMute(
+    ToggleMuteAudio event,
+    Emitter<DetectionState> emit,
+  ) {
+    _alertManager.toggleMute();
+    emit(state.copyWith(isMuted: _alertManager.isMuted));
+  }
+
+  void _onToggleTorch(
+    ToggleTorchMode event,
+    Emitter<DetectionState> emit,
+  ) {
+    emit(state.copyWith(isTorchOn: !state.isTorchOn));
   }
 
   Future<void> _onProcessFrame(
@@ -100,10 +128,12 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       // 1. Process camera image bytes into normalized tensor buffer
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
-      // 2. Execute on-device YOLO11 inference
-      final detections = await tfliteEngine.runInference(
+      // 2. Execute on-device YOLO11 inference with elevated threshold & road ROI masking
+      final rawDetections = await tfliteEngine.runInference(
         float32Buffer,
         confThreshold: state.confidenceThreshold,
+        iouThreshold: 0.40,
+        roadRoiTop: 0.35,
       );
 
       stopwatch.stop();
@@ -115,25 +145,31 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       _lastFrameTime = now;
       final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
 
-      // 4. Critical hazard alert trigger (>65% confidence on Pothole or Alligator crack)
-      DetectionResult? criticalAlert;
-      final criticalDetections = detections.where((d) => d.isCritical).toList();
+      // 4. Temporal Tracking & Coordinate EMA Smoothing
+      final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
 
-      if (criticalDetections.isNotEmpty) {
-        criticalAlert = criticalDetections.first;
-        // Trigger haptic & chime if 2 seconds elapsed since last alert
-        if (now.difference(_lastAlertTime).inSeconds >= 2) {
-          _lastAlertTime = now;
-          _triggerHazardAlert();
-        }
+      // 5. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
+      await _alertManager.evaluateAlerts(
+        detections: trackedList,
+        currentSpeedKmh: state.gpsData.speedKmh,
+        timestamp: now,
+      );
+
+      // 6. Check for confirmed critical hazards (for visual HUD banners)
+      DetectionResult? criticalAlert;
+      final criticalTracked = trackedList.where((t) => t.isCritical).toList();
+      if (criticalTracked.isNotEmpty) {
+        criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // 5. Asynchronously persist new hazard incidents to Hive
+      // 7. Persist confirmed hazard incidents with Spatio-Temporal deduplication
       int loggedCount = state.totalLoggedCount;
-      if (detections.isNotEmpty) {
-        for (final det in detections) {
+      final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
+      if (confirmedTracks.isNotEmpty) {
+        for (final track in confirmedTracks) {
+          final det = track.toDetectionResult();
           final hazard = RoadHazard.fromDetection(
-            id: '${DateTime.now().millisecondsSinceEpoch}_${det.classId}',
+            id: '${track.trackingId}_${det.classId}_${now.millisecondsSinceEpoch ~/ 1000}',
             detection: det,
             latitude: state.gpsData.latitude,
             longitude: state.gpsData.longitude,
@@ -146,7 +182,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       }
 
       emit(state.copyWith(
-        detections: detections,
+        detections: rawDetections,
+        trackedDetections: List.from(trackedList),
         inferenceLatencyMs: latencyMs,
         fps: double.parse(fps.toStringAsFixed(1)),
         criticalHazardAlert: () => criticalAlert,
@@ -159,17 +196,10 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     }
   }
 
-  void _triggerHazardAlert() {
-    try {
-      HapticFeedback.heavyImpact();
-      _audioPlayer.play(AssetSource('sounds/alert_chime.wav'), volume: 0.8);
-    } catch (_) {}
-  }
-
   @override
   Future<void> close() {
     _gpsSubscription?.cancel();
-    _audioPlayer.dispose();
+    _alertManager.dispose();
     tfliteEngine.dispose();
     gpsService.dispose();
     return super.close();

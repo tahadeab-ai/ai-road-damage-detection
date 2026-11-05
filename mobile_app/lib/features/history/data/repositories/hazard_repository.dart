@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../../detection/domain/models/road_hazard.dart';
 
@@ -22,16 +23,36 @@ class HazardRepository {
     return list;
   }
 
-  /// Stores a new hazard incident with duplicate suppression.
+  /// Stores a new hazard incident with spatio-temporal duplicate suppression.
   Future<bool> logHazard(RoadHazard hazard) async {
     if (_box == null) await initialize();
 
-    // Deduplication filter: Avoid logging identical defect within 3 seconds
-    final existing = _box!.values.where((h) =>
-        h.classId == hazard.classId &&
-        hazard.timestamp.difference(h.timestamp).inSeconds.abs() < 3);
+    // 1. Vehicle Movement Gate: Suppress logging if stationary / parking (speed < 5 km/h)
+    if (hazard.speedKmh < 5.0 && hazard.latitude != 0.0) {
+      return false; // Suppressed while stationary/parking
+    }
 
-    if (existing.isNotEmpty) {
+    // 2. Spatio-temporal deduplication gate:
+    // Suppress same defect class if within 15 meters AND within 8.0 seconds
+    final recentSameClass = _box!.values.where((h) {
+      if (h.classId != hazard.classId) return false;
+      final elapsedSec = hazard.timestamp.difference(h.timestamp).inMilliseconds.abs() / 1000.0;
+      if (elapsedSec >= 8.0) return false;
+
+      // Check distance if GPS coords are available
+      if (hazard.latitude != 0.0 && h.latitude != 0.0) {
+        final dist = Geolocator.distanceBetween(
+          h.latitude,
+          h.longitude,
+          hazard.latitude,
+          hazard.longitude,
+        );
+        return dist <= 15.0; // Same location within 15 meters
+      }
+      return true; // Fallback to temporal suppression if GPS not yet locked
+    });
+
+    if (recentSameClass.isNotEmpty) {
       return false; // Suppressed duplicate frame detection
     }
 
