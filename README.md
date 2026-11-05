@@ -1,9 +1,11 @@
 # AI Road Damage Detection System (RoadGuard AI)
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Flutter 3.x](https://img.shields.io/badge/Flutter-3.x%20Null%20Safety-02569B.svg?logo=flutter)](https://flutter.dev)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C.svg)](https://pytorch.org/)
 [![Ultralytics YOLO11](https://img.shields.io/badge/YOLO-v11-00FFFF.svg)](https://docs.ultralytics.com/)
 [![Runtime - Google Colab Hosted GPU](https://img.shields.io/badge/Runtime-Colab%20MCP%20Tesla%20T4-F9AB00.svg)](https://colab.research.google.com/)
+[![Download Android APK](https://img.shields.io/badge/Download-RoadGuard%20APK-brightgreen.svg?logo=android)](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/RoadGuard-Mobile-v1.0.0.apk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 An enterprise-grade, cloud-orchestrated Computer Vision system designed to automate road surface damage detection and classification from dashcam and vehicular camera streams. The system ingests the **RDD2022 (Road Damage Dataset 2022)**, performs spatial/temporal leakage-free sequence partitioning, trains and evaluates modern **YOLO11** architectures under decoupled hyperparameter configurations, and automates asset release delivery via the **GitHub REST API**.
@@ -150,6 +152,7 @@ annotated_img = visualizer.draw_detections(
 Pre-trained weights and benchmark artifacts are automatically delivered to GitHub Releases using `src/road_damage/utils/github_release.py`.
 
 ### Published Release Assets (`v1.0.0-weights`):
+- [`RoadGuard-Mobile-v1.0.0.apk`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/RoadGuard-Mobile-v1.0.0.apk) — Production release APK for Android (arm64-v8a / armeabi-v7a / x86_64).
 - [`best.pt`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/best.pt) — PyTorch FP32/FP16 checkpoint of top YOLO11n detector (5.25 MB).
 - [`model.onnx`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/model.onnx) — Exported dynamic ONNX model compiled with Opset 17 and ONNX-Slim (10.45 MB).
 - [`confusion_matrix.png`](https://github.com/tahadeab-ai/ai-road-damage-detection/releases/download/v1.0.0-weights/confusion_matrix.png) — Normalized confusion matrix across background and target damage classes.
@@ -158,7 +161,54 @@ Pre-trained weights and benchmark artifacts are automatically delivered to GitHu
 
 ---
 
-## 6. Colab MCP Execution Protocol & Reproducibility
+## 6. 📱 RoadGuard Mobile Application (On-Device Vision)
+
+The `mobile_app/` module provides a cross-platform Flutter application engineered for in-car dashboard mounting, executing real-time object detection directly on vehicular camera frames without cloud dependencies.
+
+```mermaid
+flowchart LR
+    A["Camera Stream (YUV420/BGRA)"] --> B["Dart Isolate (640x640 Bilinear Resizing)"]
+    B --> C["On-Device TFLite Engine (NNAPI / GPU Delegate)"]
+    C --> D["Vectorized NMS (IoU > 0.45, Conf > 0.35)"]
+    D --> E["BBoxOverlayPainter (Cyberpunk Corner HUD)"]
+    D --> F["Critical Hazard Alert (Pothole > 65% Conf)"]
+    F --> G["Haptic Pulse & Audio Chime"]
+    D --> H["GNSS Geotagging & Hive Offline Logging"]
+    H --> I["GeoJSON / CSV Incident Export"]
+```
+
+### Key Mobile Capabilities:
+- **Zero-Jank Vision Isolate**: Decodes camera stream bytes on a background Dart isolate with adaptive frame rate throttling (15–25 FPS) to preserve device thermals and battery.
+- **Neon Color-Coded HUD**: Corner-bracketed bounding boxes with signature color codes:
+  - **D00 (Longitudinal Crack)**: Neon Cyan (`#00E5FF`)
+  - **D10 (Transverse Crack)**: Electric Blue (`#2979FF`)
+  - **D20 (Alligator Crack)**: Radiant Amber (`#FF9100`)
+  - **D40 (Pothole)**: Fluorescent Crimson (`#FF1744`) with animated pulsing indicator
+- **Auditory & Haptic Co-Pilot**: Instantly alerts the driver when severe pavement anomalies (Potholes or Alligator Cracks exceeding 65% confidence) are detected ahead.
+- **GIS Incident Telemetry**: Logs each detection with GPS coordinates, street address, timestamp, and speed; exportable directly to GeoJSON and CSV.
+
+### Running & Building the Mobile App:
+
+```bash
+# Navigate to mobile application directory
+cd mobile_app
+
+# Install dependencies
+flutter pub get
+
+# Run unit and widget tests
+flutter test
+
+# Run on connected mobile device or emulator
+flutter run --release
+
+# Compile production release APK
+flutter build apk --release
+```
+
+---
+
+## 7. Colab MCP Execution Protocol & Reproducibility
 
 This project enforces a strict separation of concerns:
 - **Local Workstation**: Exclusively used for editing source code, unit tests, configurations, and documentation. No local CUDA training or deep learning packages required.
