@@ -38,10 +38,16 @@ env/
 *.swp
 *.swo
 
+# Scratch / Bundles
+bundle.b64
+bundle.tar.gz
+scratch_*
+*.b64
+
 # Datasets & Large Archives (MANDATORY: Never commit raw data)
-data/
-datasets/
-raw_data/
+/data/
+/datasets/
+/raw_data/
 VOCdevkit/
 RDD2022/
 *.tar
