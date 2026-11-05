@@ -1,0 +1,33 @@
+# RDD2022 Dataset Configuration for YOLO Object Detection
+path: data/rdd2022_yolo
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes
+nc: 4
+
+# Class names mapping
+names:
+  0: D00_Longitudinal_Crack
+  1: D10_Transverse_Crack
+  2: D20_Alligator_Crack
+  3: D40_Pothole
+
+# Metadata & descriptions
+metadata:
+  dataset_name: "Road Damage Dataset 2022 (RDD2022)"
+  subsets:
+    - "Japan"
+    - "India"
+    - "Czech"
+  class_descriptions:
+    D00: "Longitudinal Crack - Wheel path or centerline linear cracking"
+    D10: "Transverse Crack - Perpendicular linear cracking across the lane"
+    D20: "Alligator Crack - Fatigue multi-directional fatigue cracking mesh"
+    D40: "Pothole - Structural cavity or bowl-shaped road surface depression"
+  raw_voc_tags:
+    D00: 0
+    D10: 1
+    D20: 2
+    D40: 3
