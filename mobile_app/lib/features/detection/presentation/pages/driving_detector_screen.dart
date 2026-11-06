@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/constants/colors.dart';
@@ -20,34 +21,118 @@ class DrivingDetectorScreen extends StatefulWidget {
 }
 
 class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   CameraController? _cameraController;
   bool _isCameraReady = false;
+  bool _isPermissionGranted = false;
+  bool _isCheckingPermission = true;
   late AnimationController _animController;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat();
 
-    _initializeCameraAndPermissions();
+    _verifyPermissionsAndSetupCamera();
   }
 
-  Future<void> _initializeCameraAndPermissions() async {
-    // 1. Request camera and location permissions
-    await [
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Re-check permissions and re-assemble camera when returning to foreground
+      _verifyPermissionsAndSetupCamera();
+    } else if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _stopAndDisposeCamera();
+    }
+  }
+
+  /// Verifies camera and location permission statuses before instantiating hardware controller.
+  Future<void> _verifyPermissionsAndSetupCamera() async {
+    setState(() => _isCheckingPermission = true);
+
+    try {
+      final cameraStatus = await Permission.camera.status;
+      final locationStatus = await Permission.locationWhenInUse.status;
+
+      final bothGranted = cameraStatus.isGranted && locationStatus.isGranted;
+
+      if (!mounted) return;
+
+      setState(() {
+        _isPermissionGranted = bothGranted;
+        _isCheckingPermission = false;
+      });
+
+      if (bothGranted) {
+        await _initializeCamera();
+      }
+    } catch (e) {
+      debugPrint('[DrivingDetectorScreen] Permission verification notice: $e');
+      if (mounted) {
+        setState(() {
+          _isPermissionGranted = false;
+          _isCheckingPermission = false;
+        });
+      }
+    }
+  }
+
+  /// Explicitly requests camera and location permissions upon user intent.
+  Future<void> _requestPermissions() async {
+    final statuses = await [
       Permission.camera,
       Permission.locationWhenInUse,
     ].request();
 
-    // 2. Discover devices
+    final cameraGranted = statuses[Permission.camera]?.isGranted ?? false;
+    final locationGranted = statuses[Permission.locationWhenInUse]?.isGranted ?? false;
+
+    if (!mounted) return;
+
+    if (cameraGranted && locationGranted) {
+      setState(() => _isPermissionGranted = true);
+      await _initializeCamera();
+    } else {
+      setState(() => _isPermissionGranted = false);
+      // If permanently denied, prompt user to open settings
+      if (statuses[Permission.camera]?.isPermanentlyDenied == true ||
+          statuses[Permission.locationWhenInUse]?.isPermanentlyDenied == true) {
+        openAppSettings();
+      }
+    }
+  }
+
+  /// Disposes existing camera controller safely.
+  Future<void> _stopAndDisposeCamera() async {
+    try {
+      if (_cameraController != null) {
+        if (_cameraController!.value.isStreamingImages) {
+          await _cameraController!.stopImageStream();
+        }
+        await _cameraController!.dispose();
+        _cameraController = null;
+      }
+    } catch (e) {
+      debugPrint('[DrivingDetectorScreen] Camera disposal notice: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isCameraReady = false);
+      }
+    }
+  }
+
+  /// Cleanly instantiates and streams CameraController.
+  Future<void> _initializeCamera() async {
+    await _stopAndDisposeCamera();
+
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
-        setState(() => _isCameraReady = false);
+        if (mounted) setState(() => _isCameraReady = false);
         return;
       }
 
@@ -57,28 +142,35 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
         orElse: () => cameras.first,
       );
 
-      _cameraController = CameraController(
+      final controller = CameraController(
         backCamera,
         ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
       );
 
-      await _cameraController!.initialize();
+      await controller.initialize();
 
-      if (!mounted) return;
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
 
-      // Start image stream
+      _cameraController = controller;
+
+      // Start live camera stream
       await _cameraController!.startImageStream((CameraImage image) {
         if (mounted) {
           context.read<DetectionBloc>().add(ProcessCameraFrame(image));
         }
       });
 
-      setState(() => _isCameraReady = true);
+      if (mounted) {
+        setState(() => _isCameraReady = true);
+      }
     } catch (e) {
-      debugPrint('[DrivingDetectorScreen] Camera init notice: $e');
-      setState(() => _isCameraReady = false);
+      debugPrint('[DrivingDetectorScreen] Camera initialization notice: $e');
+      if (mounted) setState(() => _isCameraReady = false);
     }
   }
 
@@ -97,105 +189,224 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
 
   @override
   void dispose() {
-    _cameraController?.stopImageStream();
-    _cameraController?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _stopAndDisposeCamera();
     _animController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: BlocConsumer<DetectionBloc, DetectionState>(
-        listenWhen: (prev, curr) => prev.isTorchOn != curr.isTorchOn,
-        listener: (context, state) async {
-          if (_cameraController != null && _cameraController!.value.isInitialized) {
-            try {
-              await _cameraController!.setFlashMode(
-                state.isTorchOn ? FlashMode.torch : FlashMode.off,
-              );
-            } catch (e) {
-              debugPrint('[DrivingDetectorScreen] Flash mode toggle notice: $e');
-            }
-          }
-        },
-        builder: (context, state) {
-          final previewAspect = _getPreviewAspectRatio(context);
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: AppLanguageNotifier.instance,
+      builder: (context, lang, child) {
+        return Directionality(
+          textDirection: AppStrings.direction,
+          child: Scaffold(
+            backgroundColor: Colors.black,
+            body: BlocConsumer<DetectionBloc, DetectionState>(
+              listenWhen: (prev, curr) => prev.isTorchOn != curr.isTorchOn,
+              listener: (context, state) async {
+                if (_cameraController != null && _cameraController!.value.isInitialized) {
+                  try {
+                    await _cameraController!.setFlashMode(
+                      state.isTorchOn ? FlashMode.torch : FlashMode.off,
+                    );
+                  } catch (e) {
+                    debugPrint('[DrivingDetectorScreen] Flash mode toggle notice: $e');
+                  }
+                }
+              },
+              builder: (context, state) {
+                final previewAspect = _getPreviewAspectRatio(context);
 
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              // 1. Fullscreen Camera Viewport with BoxFit.cover (Edge-to-Edge, Zero Letterboxing)
-              if (_isCameraReady && _cameraController != null)
-                ClipRect(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final screenAspect = constraints.maxWidth / constraints.maxHeight;
-                      double scale = 1.0;
-                      if (screenAspect > previewAspect) {
-                        scale = screenAspect / previewAspect;
-                      } else {
-                        scale = previewAspect / screenAspect;
-                      }
+                // Permission Guard Overlay: displayed if camera / location permissions are missing
+                if (!_isPermissionGranted && !_isCheckingPermission) {
+                  return _buildPermissionGuardOverlay();
+                }
 
-                      return Transform.scale(
-                        scale: scale,
-                        child: Center(
-                          child: AspectRatio(
-                            aspectRatio: previewAspect,
-                            child: CameraPreview(_cameraController!),
-                          ),
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // 1. Fullscreen Camera Viewport with BoxFit.cover
+                    if (_isCameraReady && _cameraController != null)
+                      ClipRect(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final screenAspect = constraints.maxWidth / constraints.maxHeight;
+                            double scale = 1.0;
+                            if (screenAspect > previewAspect) {
+                              scale = screenAspect / previewAspect;
+                            } else {
+                              scale = previewAspect / screenAspect;
+                            }
+
+                            return Transform.scale(
+                              scale: scale,
+                              child: Center(
+                                child: AspectRatio(
+                                  aspectRatio: previewAspect,
+                                  child: CameraPreview(_cameraController!),
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      );
-                    },
-                  ),
-                )
-              else
-                _buildSimulationCameraViewport(),
+                      )
+                    else
+                      _buildSimulationCameraViewport(),
 
-              // 2. Temporally Smoothed Bounding Box Overlay with Subpixel Geometry Alignment
-              AnimatedBuilder(
-                animation: _animController,
-                builder: (context, _) {
-                  return CustomPaint(
-                    painter: BBoxOverlayPainter(
-                      trackedDetections: state.isStreaming ? state.trackedDetections : [],
-                      fallbackDetections: state.isStreaming ? state.detections : [],
-                      animationValue: _animController.value,
-                      cameraAspectRatio: previewAspect,
-                      roadRoiTop: 0.35,
+                    // 2. Temporally Smoothed Bounding Box Overlay with Subpixel Geometry Alignment
+                    AnimatedBuilder(
+                      animation: _animController,
+                      builder: (context, _) {
+                        return CustomPaint(
+                          painter: BBoxOverlayPainter(
+                            trackedDetections: state.isStreaming ? state.trackedDetections : [],
+                            fallbackDetections: state.isStreaming ? state.detections : [],
+                            animationValue: _animController.value,
+                            cameraAspectRatio: previewAspect,
+                            roadRoiTop: 0.35,
+                          ),
+                        );
+                      },
                     ),
-                  );
-                },
+
+                    // 3. Automotive Heads-Up Display (HUD)
+                    CameraHudOverlay(
+                      state: state,
+                      onToggleStreaming: () {
+                        context
+                            .read<DetectionBloc>()
+                            .add(ToggleDetectionStreaming(!state.isStreaming));
+                      },
+                      onToggleMute: () {
+                        context.read<DetectionBloc>().add(ToggleMuteAudio());
+                      },
+                      onToggleTorch: () {
+                        context.read<DetectionBloc>().add(ToggleTorchMode());
+                      },
+                      onOpenHistory: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const HazardLogScreen(),
+                          ),
+                        );
+                      },
+                      onOpenAnalytics: () => _showAnalyticsBottomSheet(context, state),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// High-aesthetic automotive permission guard screen.
+  Widget _buildPermissionGuardOverlay() {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: const BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment.center,
+          radius: 1.3,
+          colors: [Color(0xFF1E293B), Color(0xFF0A0F1D)],
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 28.0),
+      child: Center(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppColors.cyanAccent.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.cyanAccent, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.cyanAccent.withValues(alpha: 0.35),
+                      blurRadius: 24,
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.security_rounded, size: 40, color: AppColors.cyanAccent),
               ),
-
-              // 3. Automotive Heads-Up Display (HUD)
-              CameraHudOverlay(
-                state: state,
-                onToggleStreaming: () {
-                  context
-                      .read<DetectionBloc>()
-                      .add(ToggleDetectionStreaming(!state.isStreaming));
-                },
-                onToggleMute: () {
-                  context.read<DetectionBloc>().add(ToggleMuteAudio());
-                },
-                onToggleTorch: () {
-                  context.read<DetectionBloc>().add(ToggleTorchMode());
-                },
-                onOpenHistory: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const HazardLogScreen(),
+              const SizedBox(height: 24),
+              Text(
+                AppStrings.permissionTitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                AppStrings.permissionSubtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 13,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 32),
+              GestureDetector(
+                onTap: _requestPermissions,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [AppColors.cyanAccent, Color(0xFF0091EA)],
                     ),
-                  );
-                },
-                onOpenAnalytics: () => _showAnalyticsBottomSheet(context, state),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.cyanAccent.withValues(alpha: 0.45),
+                        blurRadius: 18,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Text(
+                      AppStrings.grantPermissions,
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ).animate().shimmer(duration: 2000.ms),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => openAppSettings(),
+                child: Text(
+                  AppStrings.openSettings,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ],
-          );
-        },
+          ),
+        ),
       ),
     );
   }

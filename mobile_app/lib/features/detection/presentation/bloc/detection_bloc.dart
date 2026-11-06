@@ -129,55 +129,59 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       // 1. Process camera image bytes into normalized tensor buffer
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
-      // 2. Execute on-device YOLO11 inference with elevated threshold & road ROI masking
-      final rawDetections = await tfliteEngine.runInference(
-        float32Buffer,
-        confThreshold: state.confidenceThreshold,
-        iouThreshold: 0.35,
-        roadRoiTop: 0.35,
-      );
+      // 2. Road Surface Binary Gatekeeper (road_gate.tflite / MobileNetV3)
+      // Skips YOLO detection if classified as Non-Road (e.g. indoor floors, rugs, tiles, furniture)
+      final isRoad = await tfliteEngine.checkRoadSurface(float32Buffer);
+      List<DetectionResult> rawDetections = [];
+
+      if (isRoad) {
+        // 3. Execute on-device YOLO11 inference with elevated threshold & road ROI masking
+        rawDetections = await tfliteEngine.runInference(
+          float32Buffer,
+          confThreshold: state.confidenceThreshold,
+          iouThreshold: 0.35,
+          roadRoiTop: 0.35,
+        );
+      }
 
       stopwatch.stop();
       final latencyMs = stopwatch.elapsedMilliseconds;
 
-      // 3. Compute frame rate
+      // 4. Compute frame rate
       final now = DateTime.now();
       final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
       _lastFrameTime = now;
       final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
 
-      // 4. Temporal Tracking & Coordinate EMA Smoothing
+      // 5. Temporal Tracking & Coordinate EMA Smoothing with Persistent Spatial Lock
       final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
 
-      // 5. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
+      // 6. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
       await _alertManager.evaluateAlerts(
         detections: trackedList,
         currentSpeedKmh: state.gpsData.speedKmh,
         timestamp: now,
       );
 
-      // 6. Check for confirmed critical hazards (for visual HUD banners)
+      // 7. Check for confirmed critical hazards (for visual HUD banners)
       DetectionResult? criticalAlert;
       final criticalTracked = trackedList.where((t) => t.isCritical).toList();
       if (criticalTracked.isNotEmpty) {
         criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // 7. Persist confirmed hazard incidents with Spatio-Temporal deduplication & evidence snapshot
+      // 8. Persist confirmed hazard incidents with 100% guaranteed in-memory snapshot evidence
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
       if (confirmedTracks.isNotEmpty) {
         for (final track in confirmedTracks) {
           final det = track.toDetectionResult();
 
-          // Evidence snapshot capture if confirmed with conf >= 0.70 while moving
-          String? snapshotPath;
-          if (track.confidence >= 0.70 && state.gpsData.speedKmh >= 5.0) {
-            snapshotPath = await SnapshotCaptureService.captureHazardSnapshot(
-              rgbBuffer: float32Buffer,
-              detection: det,
-            );
-          }
+          // 100% Guaranteed Evidence snapshot capture from active frame memory
+          final snapshotPath = await SnapshotCaptureService.captureHazardSnapshot(
+            rgbBuffer: float32Buffer,
+            detection: det,
+          );
 
           final hazard = RoadHazard.fromDetection(
             id: '${track.trackingId}_${det.classId}_${now.millisecondsSinceEpoch ~/ 1000}',

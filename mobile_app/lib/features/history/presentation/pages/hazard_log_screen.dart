@@ -43,14 +43,37 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: AppStrings.direction,
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          title: Text(AppStrings.historyTitle),
-          actions: [
-            PopupMenuButton<String>(
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: AppLanguageNotifier.instance,
+      builder: (context, lang, child) {
+        return Directionality(
+          textDirection: AppStrings.direction,
+          child: Scaffold(
+            backgroundColor: AppColors.background,
+            appBar: AppBar(
+              title: Text(AppStrings.historyTitle),
+              actions: [
+                // Quick Language Switcher
+                IconButton(
+                  tooltip: 'AR / EN',
+                  icon: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.cyanAccent, width: 1.0),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      AppStrings.languageToggleLabel,
+                      style: const TextStyle(
+                        color: AppColors.cyanAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  onPressed: () => AppLanguageNotifier.instance.toggleLanguage(),
+                ),
+                PopupMenuButton<String>(
               icon: const Icon(Icons.ios_share_rounded),
               tooltip: 'Export Dataset',
               onSelected: (value) async {
@@ -122,6 +145,8 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
           ],
         ),
       ),
+    );
+      },
     );
   }
 

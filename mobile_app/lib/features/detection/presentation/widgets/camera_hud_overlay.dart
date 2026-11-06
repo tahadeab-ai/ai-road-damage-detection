@@ -25,37 +25,42 @@ class CameraHudOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: AppStrings.direction,
-      child: SafeArea(
-        child: Column(
-          children: [
-            // 1. Top Automotive Telemetry HUD Header
-            _buildTopHudBar(context),
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: AppLanguageNotifier.instance,
+      builder: (context, lang, child) {
+        return Directionality(
+          textDirection: AppStrings.direction,
+          child: SafeArea(
+            child: Column(
+              children: [
+                // 1. Top Automotive Telemetry HUD Header (Overflow-Proof via FittedBox)
+                _buildTopHudBar(context),
 
-            // 2. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
-            if (state.criticalHazardAlert != null)
-              _buildCriticalWarningBanner(context),
+                // 2. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
+                if (state.criticalHazardAlert != null)
+                  _buildCriticalWarningBanner(context),
 
-            const Spacer(),
+                const Spacer(),
 
-            // 3. Bottom HUD Automotive Console
-            _buildBottomControlBar(context),
-          ],
-        ),
-      ),
+                // 3. Bottom HUD Automotive Console
+                _buildBottomControlBar(context),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
   Widget _buildTopHudBar(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: AppColors.surfaceGlass,
               borderRadius: BorderRadius.circular(22),
@@ -68,155 +73,191 @@ class CameraHudOverlay extends StatelessWidget {
                 ),
               ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Vehicle Speedometer & Standby Badge
-                Row(
-                  children: [
-                    const Icon(Icons.speed_rounded, color: AppColors.cyanAccent, size: 22),
-                    const SizedBox(width: 6),
-                    RichText(
-                      text: TextSpan(
-                        children: [
-                          TextSpan(
-                            text: state.gpsData.speedKmh.toStringAsFixed(0),
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                              fontFamily: 'monospace',
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Vehicle Speedometer & Standby Badge
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.speed_rounded, color: AppColors.cyanAccent, size: 20),
+                      const SizedBox(width: 4),
+                      RichText(
+                        text: TextSpan(
+                          children: [
+                            TextSpan(
+                              text: state.gpsData.speedKmh.toStringAsFixed(0),
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                                fontFamily: 'monospace',
+                              ),
                             ),
-                          ),
-                          TextSpan(
-                            text: ' ${AppStrings.speedUnit}',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
+                            TextSpan(
+                              text: ' ${AppStrings.speedUnit}',
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
+                      if (state.isLowSpeed) ...[
+                        const SizedBox(width: 6),
+                        Tooltip(
+                          message: AppStrings.standbyTooltip,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.warning.withValues(alpha: 0.20),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: AppColors.warning, width: 0.8),
+                            ),
+                            child: Text(
+                              AppStrings.standby,
+                              style: const TextStyle(
+                                color: AppColors.warning,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  // Latency & Framerate Telemetry Tag
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.border, width: 0.6),
                     ),
-                    if (state.isLowSpeed) ...[
-                      const SizedBox(width: 8),
-                      Tooltip(
-                        message: AppStrings.standbyTooltip,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
                           decoration: BoxDecoration(
-                            color: AppColors.warning.withValues(alpha: 0.20),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: AppColors.warning, width: 1),
+                            shape: BoxShape.circle,
+                            color: state.isStreaming ? AppColors.successGps : AppColors.warning,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${state.inferenceLatencyMs}${AppStrings.msUnit} • ${state.fps} ${AppStrings.fpsUnit}',
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  // Controls: Language Switcher, GPS, Incident Count, Audio Mute
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Quick Language Switcher Button (AR / EN)
+                      GestureDetector(
+                        onTap: () => AppLanguageNotifier.instance.toggleLanguage(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.cyanAccent.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.cyanAccent, width: 1.0),
                           ),
                           child: Text(
-                            AppStrings.standby,
+                            AppStrings.languageToggleLabel,
                             style: const TextStyle(
-                              color: AppColors.warning,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-
-                // Latency & Framerate Telemetry Tag
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.border, width: 0.6),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: state.isStreaming ? AppColors.successGps : AppColors.warning,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${state.inferenceLatencyMs}${AppStrings.msUnit} • ${state.fps} ${AppStrings.fpsUnit}',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Controls & Lock: GPS, Incident Count, Audio Mute Toggle
-                Row(
-                  children: [
-                    Icon(
-                      state.gpsData.isGpsLocked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
-                      color: state.gpsData.isGpsLocked ? AppColors.successGps : AppColors.warning,
-                      size: 17,
-                    ),
-                    const SizedBox(width: 8),
-
-                    // Active Confirmed Hazard Count Badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.d40Pothole.withValues(alpha: 0.22),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: AppColors.d40Pothole, width: 1),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.warning_amber_rounded, color: AppColors.d40Pothole, size: 12),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${state.trackedDetections.where((t) => t.isConfirmed).length}',
-                            style: const TextStyle(
-                              color: AppColors.d40Pothole,
+                              color: AppColors.cyanAccent,
                               fontSize: 11,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
 
-                    // HUD Audio Mute Toggle Button
-                    GestureDetector(
-                      onTap: onToggleMute,
-                      child: Container(
-                        padding: const EdgeInsets.all(5),
+                      const SizedBox(width: 8),
+
+                      // GPS Indicator
+                      Icon(
+                        state.gpsData.isGpsLocked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
+                        color: state.gpsData.isGpsLocked ? AppColors.successGps : AppColors.warning,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+
+                      // Active Confirmed Hazard Count Badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: state.isMuted
-                              ? Colors.red.withValues(alpha: 0.25)
-                              : Colors.white.withValues(alpha: 0.1),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: state.isMuted ? Colors.red : AppColors.border,
-                            width: 1,
+                          color: AppColors.d40Pothole.withValues(alpha: 0.22),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: AppColors.d40Pothole, width: 0.8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, color: AppColors.d40Pothole, size: 12),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${state.trackedDetections.where((t) => t.isConfirmed).length}',
+                              style: const TextStyle(
+                                color: AppColors.d40Pothole,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+
+                      // HUD Audio Mute Toggle Button
+                      GestureDetector(
+                        onTap: onToggleMute,
+                        child: Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: state.isMuted
+                                ? Colors.red.withValues(alpha: 0.25)
+                                : Colors.white.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: state.isMuted ? Colors.red : AppColors.border,
+                              width: 1,
+                            ),
+                          ),
+                          child: Icon(
+                            state.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                            color: state.isMuted ? Colors.redAccent : AppColors.cyanAccent,
+                            size: 15,
                           ),
                         ),
-                        child: Icon(
-                          state.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                          color: state.isMuted ? Colors.redAccent : AppColors.cyanAccent,
-                          size: 16,
-                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -230,13 +271,13 @@ class CameraHudOverlay extends StatelessWidget {
     final percent = (alert.confidence * 100).toInt();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: AppColors.d40Pothole.withValues(alpha: 0.88),
               borderRadius: BorderRadius.circular(18),
@@ -251,8 +292,8 @@ class CameraHudOverlay extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.emergency_outlined, color: Colors.white, size: 28),
-                const SizedBox(width: 12),
+                const Icon(Icons.emergency_outlined, color: Colors.white, size: 26),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -261,9 +302,9 @@ class CameraHudOverlay extends StatelessWidget {
                         AppStrings.criticalHazardTitle,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.95),
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 0.8,
+                          letterSpacing: 0.6,
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -271,7 +312,7 @@ class CameraHudOverlay extends StatelessWidget {
                         AppStrings.criticalHazardSubtitle(defectName, percent),
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 15,
+                          fontSize: 14,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -288,13 +329,13 @@ class CameraHudOverlay extends StatelessWidget {
 
   Widget _buildBottomControlBar(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(28),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
               color: AppColors.surfaceGlass,
               borderRadius: BorderRadius.circular(28),
@@ -325,7 +366,7 @@ class CameraHudOverlay extends StatelessWidget {
                 GestureDetector(
                   onTap: onToggleStreaming,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: state.isStreaming
@@ -342,18 +383,19 @@ class CameraHudOverlay extends StatelessWidget {
                       ],
                     ),
                     child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
                           state.isStreaming ? Icons.pause_rounded : Icons.play_arrow_rounded,
                           color: state.isStreaming ? Colors.white : Colors.black,
-                          size: 20,
+                          size: 19,
                         ),
                         const SizedBox(width: 6),
                         Text(
                           state.isStreaming ? AppStrings.pauseAi : AppStrings.resumeAi,
                           style: TextStyle(
                             color: state.isStreaming ? Colors.white : Colors.black,
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 0.5,
                           ),

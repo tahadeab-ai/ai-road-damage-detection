@@ -5,12 +5,33 @@ enum AppLanguage {
   english,
 }
 
+/// Reactive language notifier for instantaneous app-wide translation updates.
+class AppLanguageNotifier extends ValueNotifier<AppLanguage> {
+  AppLanguageNotifier._() : super(AppLanguage.arabic);
+
+  static final AppLanguageNotifier instance = AppLanguageNotifier._();
+
+  void toggleLanguage() {
+    value = (value == AppLanguage.arabic) ? AppLanguage.english : AppLanguage.arabic;
+  }
+
+  void setLanguage(AppLanguage language) {
+    if (value != language) {
+      value = language;
+    }
+  }
+}
+
 /// Centralized Arabic & English ADAS Localization.
 class AppStrings {
-  static AppLanguage currentLanguage = AppLanguage.arabic;
+  static AppLanguage get currentLanguage => AppLanguageNotifier.instance.value;
+  static set currentLanguage(AppLanguage lang) => AppLanguageNotifier.instance.setLanguage(lang);
 
   static bool get isArabic => currentLanguage == AppLanguage.arabic;
   static TextDirection get direction => isArabic ? TextDirection.rtl : TextDirection.ltr;
+
+  // Language Toggle Button Label
+  static String get languageToggleLabel => isArabic ? 'EN' : 'عربي';
 
   // Defect Class Names
   static String getDefectName(int classId) {
@@ -102,4 +123,12 @@ class AppStrings {
   static String get recordedAt => isArabic ? 'وقت التسجيل' : 'Recorded At';
   static String get confidence => isArabic ? 'نسبة التأكيد' : 'Confidence';
   static String get noSnapshot => isArabic ? 'لا توجد صورة إثبات' : 'No snapshot evidence';
+
+  // Permission Guard Strings
+  static String get permissionTitle => isArabic ? 'صلاحيات الكاميرا والموقع مطلوبة' : 'Camera & Location Required';
+  static String get permissionSubtitle => isArabic
+      ? 'يعتمد نظام RoadGuard AI على بث الكاميرا وتتبع GPS لرصد وتوثيق أضرار الطريق بدقة بالغة.'
+      : 'RoadGuard AI requires direct camera feed and GPS telemetry to accurately detect and log road hazards.';
+  static String get grantPermissions => isArabic ? 'منح الصلاحيات وبدء الرصد' : 'Grant Permissions & Start';
+  static String get openSettings => isArabic ? 'فتح إعدادات الجهاز' : 'Open System Settings';
 }

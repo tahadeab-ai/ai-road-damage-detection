@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../features/detection/domain/models/detection_result.dart';
 import 'nms_utils.dart';
 
-/// A temporally smoothed and tracked detection candidate across camera frames.
+/// A temporally smoothed, locked, and tracked detection candidate across camera frames.
 class TrackedDetection {
   final int trackingId;
   final int classId;
@@ -13,6 +13,7 @@ class TrackedDetection {
   int streak; // Consecutive frames detected
   DateTime lastSeen;
   double opacity;
+  double velocityDy; // Downward motion velocity per frame in normalized space
 
   TrackedDetection({
     required this.trackingId,
@@ -23,10 +24,14 @@ class TrackedDetection {
     this.streak = 1,
     DateTime? lastSeen,
     this.opacity = 1.0,
+    this.velocityDy = 0.0,
   }) : lastSeen = lastSeen ?? DateTime.now();
 
   /// Confirmed if tracked across at least 3 consecutive frames (eliminates transient false positives).
   bool get isConfirmed => streak >= 3;
+
+  /// High-confidence persistent target lock-on.
+  bool get isLocked => isConfirmed;
 
   /// Critical hazard: confirmed Pothole (D40) or Alligator Crack (D20).
   bool get isCritical => isConfirmed && (classId == 2 || classId == 3);
@@ -42,7 +47,8 @@ class TrackedDetection {
 }
 
 /// Temporal Filter that associates detections across consecutive frames,
-/// smooths jitter with Exponential Moving Average (EMA), and suppresses transient flickers.
+/// smooths jitter with Exponential Moving Average (EMA), extrapolates downward road motion,
+/// and maintains persistent spatial locks on verified road defects.
 class TemporalFilter {
   final double iouThreshold;
   final double emaAlpha; // Weight for new frame coordinates (0.0 to 1.0)
@@ -69,10 +75,10 @@ class TemporalFilter {
     final now = timestamp ?? DateTime.now();
     final matchedIndices = <int>{};
 
-    // 1. Associate incoming detections with existing tracked objects
+    // 1. Associate incoming detections with existing tracked objects using IoU & Centroid Distance
     for (final raw in rawDetections) {
       int? bestMatchIdx;
-      double bestIoU = 0.0;
+      double bestScore = 0.0;
 
       for (int i = 0; i < _trackedPool.length; i++) {
         if (matchedIndices.contains(i)) continue;
@@ -82,20 +88,32 @@ class TemporalFilter {
         if (tracked.classId != raw.classId) continue;
 
         final iou = NmsUtils.calculateIoU(raw.normalizedRect, tracked.smoothedRect);
-        if (iou > iouThreshold && iou > bestIoU) {
-          bestIoU = iou;
-          bestMatchIdx = i;
+        final centroidDist = (raw.normalizedRect.center - tracked.smoothedRect.center).distance;
+
+        // Dual association: strong IoU or tight spatial centroid proximity
+        final isMatch = (iou > iouThreshold) || (iou > 0.12 && centroidDist < 0.22);
+
+        if (isMatch) {
+          final score = iou + (1.0 - centroidDist.clamp(0.0, 1.0));
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatchIdx = i;
+          }
         }
       }
 
       if (bestMatchIdx != null) {
-        // Update matched track with EMA coordinate smoothing
+        // Update matched track with EMA coordinate smoothing and velocity estimation
         matchedIndices.add(bestMatchIdx);
         final track = _trackedPool[bestMatchIdx];
         track.confidence = raw.confidence;
         track.lastSeen = now;
         track.streak += 1;
         track.opacity = 1.0;
+
+        // Estimate downward trajectory velocity
+        final currentDy = raw.normalizedRect.center.dy - track.smoothedRect.center.dy;
+        track.velocityDy = track.velocityDy * 0.7 + currentDy * 0.3;
 
         // Exponential Moving Average (EMA) smoothing on coordinates
         final newLeft = track.smoothedRect.left * (1.0 - emaAlpha) + raw.normalizedRect.left * emaAlpha;
@@ -121,15 +139,24 @@ class TemporalFilter {
       }
     }
 
-    // 2. Decay opacity of unmatched tracks and prune expired ones
+    // 2. Extrapolate motion for unmatched confirmed tracks, decay opacity, and prune out-of-frame tracks
     _trackedPool.removeWhere((track) {
+      // If object exited the bottom or sides of the camera frame, prune immediately
+      if (track.smoothedRect.top > 1.05 || track.smoothedRect.bottom > 1.15) {
+        return true;
+      }
+
       final elapsedMs = now.difference(track.lastSeen).inMilliseconds;
       if (elapsedMs > persistenceMs) {
         return true; // Prune expired track
       }
 
-      // If unmatched in this frame, decay opacity smoothly
+      // If unmatched in this frame, apply smooth downward perspective motion extrapolation
       if (elapsedMs > 50) {
+        if (track.isConfirmed && track.velocityDy > 0.0) {
+          final stepDy = (track.velocityDy * 0.5).clamp(0.0, 0.02);
+          track.smoothedRect = track.smoothedRect.translate(0, stepDy);
+        }
         final remainingRatio = 1.0 - (elapsedMs / persistenceMs);
         track.opacity = max(0.0, remainingRatio);
       }
