@@ -1,0 +1,86 @@
+# ==============================================================================
+# RoadGuard AI — Multi-Model Experimentation & Benchmark Matrix Specification
+# Authoritative 4-Class Architecture (D00, D10, D20, D40)
+# ==============================================================================
+
+governance:
+  framework: "PyTorch & Ultralytics YOLO"
+  pinned_dependencies:
+    ultralytics: "8.2.32"
+    torch: "2.3.1"
+    onnx: "1.16.1"
+    onnxruntime: "1.18.0"
+    onnxslim: "0.1.31"
+  licensing:
+    model_code:
+      provider: "Ultralytics"
+      license: "AGPL-3.0"
+      commercial_risk: "CRITICAL: AGPL-3.0 copyleft requires commercial enterprise license from Ultralytics LLC for proprietary network distribution."
+    dataset:
+      provider: "RDD2022 (Sekimoto Lab)"
+      license: "CC BY-SA 4.0"
+      attribution_required: true
+
+matrix:
+  run_optional_upper_bound: false  # Avoid T4 timeout; evaluate Candidate A & B
+
+  candidates:
+    candidate_a:
+      name: "roadguard-yolov8n-baseline"
+      model_type: "yolov8n"
+      weights: "yolov8n.pt"
+      parameters: 3011048
+      gflops: 8.2
+      role: "production_baseline"
+      status: "core"
+
+    candidate_b:
+      name: "roadguard-yolo11n-candidate"
+      model_type: "yolo11n"
+      weights: "yolo11n.pt"
+      parameters: 2589000
+      gflops: 6.5
+      role: "next_gen_edge_candidate"
+      status: "core"
+
+    candidate_c:
+      name: "roadguard-yolov8s-ceiling"
+      model_type: "yolov8s"
+      weights: "yolov8s.pt"
+      parameters: 11166560
+      gflops: 28.6
+      role: "accuracy_ceiling_upper_bound"
+      status: "optional_secondary"
+
+dataset_binding:
+  config: "ai/configs/dataset.yaml"
+  colab_data_path: "/content/roadguard_rdd2022/data.yaml"
+  input_resolution: 640
+  num_classes: 4
+  classes:
+    0: "D00_longitudinal_crack"
+    1: "D10_transverse_crack"
+    2: "D20_alligator_crack"
+    3: "D40_pothole"
+
+metrics_policy:
+  primary_safety_metric: "F2_D40_pothole"
+  secondary_balanced_metric: "F2_macro_4class"
+  iou_threshold_eval: 0.50
+  threshold_selection_protocol:
+    method: "validation_tuning_single_test_report"
+    confidence_sweep_range: [0.10, 0.90]
+    confidence_sweep_step: 0.02
+    tuning_split: "val"
+    reporting_split: "test"
+
+latency_protocol:
+  device_tested: "Colab x86_64 CPU (Proxy)"
+  target_deployment_device: "ARM Cortex-A76/A78 (Android Mobile NPU/CPU)"
+  batch_size: 1
+  warmup_iterations: 50
+  benchmark_runs: 200
+  intra_op_threads: 2
+  reported_percentiles: ["p50", "p95"]
+  measurement_scope: "End-to-End: Preprocess + ONNX Forward Pass + Vectorized NMS"
+  proxy_pass_criterion_ms: 80.0

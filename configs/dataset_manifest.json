@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "dataset_id": "roadguard-rdd2022-v1-4class",
+  "name": "RoadGuard AI Unified 4-Class Road Hazard Dataset",
+  "version": "1.1.0",
+  "created_at": "2026-11-06T12:00:00Z",
+  "license": "CC BY-SA 4.0",
+  "description": "Standardized multi-country road hazard dataset for edge YOLO object detection. Re-annotated from RDD2022 (Japan, India, Czech) preserving the authoritative 4-class damage taxonomy.",
+  "sources": [
+    {
+      "name": "Road Damage Dataset 2022 (RDD2022)",
+      "citation": "Arya, D., Maeda, H., Ghosh, S. K., Toshniwal, D., Mraz, A., Kashiyama, T., & Sekimoto, Y. (2022). Crowdsensing-based Road Damage Detection: Challenge and Datasets. IEEE Transactions on Intelligent Transportation Systems.",
+      "url": "https://crddc2022.sekilab.global/",
+      "license": "Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)",
+      "countries": ["Japan", "India", "Czech"],
+      "raw_format": "Pascal VOC XML (32-bit integer pixel coordinates)",
+      "raw_classes": ["D00", "D10", "D20", "D30", "D40"]
+    }
+  ],
+  "taxonomy": {
+    "num_classes": 4,
+    "target_classes": [
+      {
+        "id": 0,
+        "name": "D00_longitudinal_crack",
+        "description": "Longitudinal crack parallel to the road centerline.",
+        "source_mapping": ["D00"],
+        "severity": "medium"
+      },
+      {
+        "id": 1,
+        "name": "D10_transverse_crack",
+        "description": "Transverse crack perpendicular to the road centerline.",
+        "source_mapping": ["D10"],
+        "severity": "medium"
+      },
+      {
+        "id": 2,
+        "name": "D20_alligator_crack",
+        "description": "Alligator or crocodile pattern fatigue cracking in asphalt.",
+        "source_mapping": ["D20"],
+        "severity": "high"
+      },
+      {
+        "id": 3,
+        "name": "D40_pothole",
+        "description": "Structural bowl-shaped cavity or depression in road surface.",
+        "source_mapping": ["D40"],
+        "severity": "critical"
+      }
+    ],
+    "excluded_classes": ["D30", "D50", "Repair", "Blur", "Manhole"]
+  },
+  "partitions": {
+    "train": {
+      "strategy": "Geographic group split (Japan sub-prefectures + India urban sectors)",
+      "split_ratio": 0.75
+    },
+    "val": {
+      "strategy": "Disjoint geographic evaluation regions (Czech test corridors + separate Japan prefectures)",
+      "split_ratio": 0.15
+    },
+    "test": {
+      "strategy": "Independent hold-out test set with zero geographic overlap",
+      "split_ratio": 0.10
+    }
+  },
+  "annotation_spec": {
+    "format": "YOLO Darknet format (.txt file per .jpg)",
+    "line_format": "<class_id> <x_center> <y_center> <width> <height>",
+    "coordinate_system": "Normalized floating point in range [0.000000, 1.000000]",
+    "precision": 6
+  }
+}

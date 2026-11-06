@@ -1,33 +1,75 @@
-# RDD2022 Dataset Configuration for YOLO Object Detection
-path: data/rdd2022_yolo
+# ==============================================================================
+# RoadGuard AI — YOLO Dataset Configuration
+# Standardized RDD2022 (Road Damage Dataset 2022) 4-Class Taxonomy
+# ==============================================================================
+
+# Dataset root directory (Relative for local lightweight tests or absolute in Colab: /content/roadguard_rdd2022)
+path: /content/roadguard_rdd2022
 train: images/train
 val: images/val
 test: images/test
 
-# Number of classes
+# Number of target classes: 4
 nc: 4
 
-# Class names mapping
+# Authoritative 4-Class Names & Index Mapping:
+# Class 0: D00_longitudinal_crack (Longitudinal Crack)
+# Class 1: D10_transverse_crack   (Transverse Crack)
+# Class 2: D20_alligator_crack    (Alligator Crack)
+# Class 3: D40_pothole            (Pothole)
 names:
-  0: D00_Longitudinal_Crack
-  1: D10_Transverse_Crack
-  2: D20_Alligator_Crack
-  3: D40_Pothole
+  0: D00_longitudinal_crack
+  1: D10_transverse_crack
+  2: D20_alligator_crack
+  3: D40_pothole
 
-# Metadata & descriptions
-metadata:
-  dataset_name: "Road Damage Dataset 2022 (RDD2022)"
-  subsets:
-    - "Japan"
-    - "India"
-    - "Czech"
-  class_descriptions:
-    D00: "Longitudinal Crack - Wheel path or centerline linear cracking"
-    D10: "Transverse Crack - Perpendicular linear cracking across the lane"
-    D20: "Alligator Crack - Fatigue multi-directional fatigue cracking mesh"
-    D40: "Pothole - Structural cavity or bowl-shaped road surface depression"
-  raw_voc_tags:
-    D00: 0
-    D10: 1
-    D20: 2
-    D40: 3
+# ==============================================================================
+# Taxonomy & Normalization Specifications
+# ==============================================================================
+taxonomy_mapping:
+  D00:
+    source_name: "Longitudinal Crack"
+    target_class_id: 0
+    target_class_name: "D00_longitudinal_crack"
+    action: "retain"
+  D10:
+    source_name: "Transverse Crack"
+    target_class_id: 1
+    target_class_name: "D10_transverse_crack"
+    action: "retain"
+  D20:
+    source_name: "Alligator Crack"
+    target_class_id: 2
+    target_class_name: "D20_alligator_crack"
+    action: "retain"
+  D40:
+    source_name: "Pothole"
+    target_class_id: 3
+    target_class_name: "D40_pothole"
+    action: "retain"
+  D30:
+    source_name: "Rutting / Bump / White Line Blur"
+    target_class_id: null
+    target_class_name: null
+    action: "filter_out"
+  D50:
+    source_name: "Manhole / Joint"
+    target_class_id: null
+    target_class_name: null
+    action: "filter_out"
+  Repair:
+    source_name: "Repaired Patch"
+    target_class_id: null
+    target_class_name: null
+    action: "filter_out"
+
+# Coordinate Bounding Box Contract:
+# Format: YOLO Darknet normalized coordinates: [class_id, x_center, y_center, width, height]
+# Constraints: 0.0 <= x_center, y_center, width, height <= 1.0
+# Filtering rule: Discard inverted coordinates (xmin >= xmax or ymin >= ymax)
+coordinate_contract:
+  format: "yolo_darknet"
+  normalized: true
+  min_box_area: 0.0001
+  max_coord: 1.0
+  min_coord: 0.0

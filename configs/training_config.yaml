@@ -1,0 +1,89 @@
+# ==============================================================================
+# RoadGuard AI — Edge Detection Model Training & Export Specification
+# Target Architecture: Ultralytics YOLOv8n / YOLOv11n (Sub-3.2M Parameters)
+# Authoritative 4-Class Architecture (D00, D10, D20, D40)
+# ==============================================================================
+
+model:
+  name: "roadguard-yolo"
+  version: "1.1.0"
+  architecture: "yolov8n"       # Baseline: yolov8n | Candidate: yolo11n
+  pretrained_weights: "yolov8n.pt"
+  num_classes: 4
+  class_names:
+    0: "D00_longitudinal_crack"
+    1: "D10_transverse_crack"
+    2: "D20_alligator_crack"
+    3: "D40_pothole"
+  input_resolution:
+    width: 640
+    height: 640
+    channels: 3
+    letterbox: true
+
+dataset:
+  config_path: "ai/configs/dataset.yaml"
+  colab_data_path: "/content/roadguard_rdd2022/data.yaml"
+  train_split: "images/train"
+  val_split: "images/val"
+  test_split: "images/test"
+
+training:
+  epochs: 75
+  batch_size: 32               # Ideal for Colab 16GB T4 / 40GB A100 VRAM
+  workers: 4
+  device: 0                    # Cloud GPU index
+  seed: 42
+  deterministic: true
+  patience: 15                 # Early stopping threshold
+  save_period: 5               # Checkpoint interval for interruption recovery
+
+optimizer:
+  type: "AdamW"
+  lr0: 0.001                   # Initial learning rate
+  lrf: 0.01                    # Final learning rate factor
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  cos_lr: true
+  close_mosaic: 10
+
+loss:
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
+
+augmentations:
+  hsv_h: 0.015
+  hsv_s: 0.700
+  hsv_v: 0.400
+  degrees: 3.0
+  translate: 0.100
+  scale: 0.500
+  shear: 2.000
+  perspective: 0.0005
+  flipud: 0.0                  # Road surface is always bottom plane
+  fliplr: 0.500
+  mosaic: 1.000
+  mixup: 0.150
+  copy_paste: 0.100
+
+evaluation:
+  conf_threshold: 0.25
+  iou_threshold: 0.50
+  max_det: 300
+
+export:
+  target_format: "onnx"
+  opset: 17
+  dynamic_batch: true          # Dynamic batch axis [batch, 3, 640, 640]
+  simplify: true
+  output_tensor_shape: [1, 8, 8400]  # 4 coordinates + 4 class scores
+  quantization:
+    enabled: true
+    method: "dynamic"
+    target_hardware: "arm64"
+    output_filename: "roadguard-yolo-v1.1.0-int8.onnx"
+  latency_budget_ms: 80.0

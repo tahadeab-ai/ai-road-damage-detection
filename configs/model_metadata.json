@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RoadGuardModelMetadata",
+  "model_name": "roadguard-yolo",
+  "version": "1.1.0",
+  "architecture": "yolov8n",
+  "parameters_count": 3011048,
+  "format": "ONNX",
+  "quantization": "INT8",
+  "opset_version": 17,
+  "input_tensor": {
+    "name": "images",
+    "shape": [1, 3, 640, 640],
+    "type": "float32",
+    "normalization": {
+      "mean": [0.0, 0.0, 0.0],
+      "std": [1.0, 1.0, 1.0],
+      "scale": 0.00392156862745098
+    }
+  },
+  "output_tensor": {
+    "name": "output0",
+    "shape": [1, 8, 8400],
+    "type": "float32",
+    "encoding": "yolov8_anchor_free",
+    "channel_layout": [
+      "x_center_normalized",
+      "y_center_normalized",
+      "width_normalized",
+      "height_normalized",
+      "D00_longitudinal_crack_score",
+      "D10_transverse_crack_score",
+      "D20_alligator_crack_score",
+      "D40_pothole_score"
+    ]
+  },
+  "classes": [
+    {
+      "id": 0,
+      "name": "D00_longitudinal_crack",
+      "severity_weight": 0.5,
+      "description": "Longitudinal crack parallel to road centerline."
+    },
+    {
+      "id": 1,
+      "name": "D10_transverse_crack",
+      "severity_weight": 0.5,
+      "description": "Transverse crack perpendicular to road centerline."
+    },
+    {
+      "id": 2,
+      "name": "D20_alligator_crack",
+      "severity_weight": 0.7,
+      "description": "Alligator/fatigue interconnecting crack network."
+    },
+    {
+      "id": 3,
+      "name": "D40_pothole",
+      "severity_weight": 0.9,
+      "description": "Cavity or bowl depression in pavement. High alert priority."
+    }
+  ],
+  "thresholds": {
+    "confidence_threshold": 0.45,
+    "iou_threshold": 0.50,
+    "borderline_min": 0.35,
+    "borderline_max": 0.55,
+    "max_detections_per_frame": 50
+  },
+  "performance_benchmarks": {
+    "target_device": "Android Mid-Tier (Snapdragon 778G / ARM Cortex-A78)",
+    "mean_inference_latency_ms": 64.2,
+    "p95_inference_latency_ms": 78.5,
+    "fps_sustainable": 12.5,
+    "fp32_model_size_bytes": 12248576,
+    "int8_model_size_bytes": 3314688,
+    "compression_ratio": "3.7x",
+    "mAP50_target": 0.825,
+    "mAP50_95_target": 0.548
+  },
+  "provenance": {
+    "training_environment": "Google Colab (NVIDIA T4 16GB / A100 40GB)",
+    "training_config_file": "ai/configs/training_config.yaml",
+    "dataset_binding": "ai/configs/dataset.yaml",
+    "base_checkpoint": "yolov8n.pt",
+    "epochs": 75,
+    "optimizer": "AdamW",
+    "drive_checkpoint_dir": "/content/drive/MyDrive/RoadGuard_Models/v1.1.0",
+    "release_asset_name": "roadguard-yolo-v1.1.0-int8.onnx"
+  }
+}
