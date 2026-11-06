@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path/path.dart' as p;
@@ -40,12 +41,14 @@ class HazardRepository {
               defect_class TEXT NOT NULL,
               class_id INTEGER NOT NULL,
               confidence REAL NOT NULL,
-              latitude REAL NOT NULL,
-              longitude REAL NOT NULL,
+              latitude REAL,
+              longitude REAL,
               speed_kmh REAL NOT NULL,
               timestamp TEXT NOT NULL,
               address TEXT,
-              snapshot_path TEXT
+              snapshot_path TEXT,
+              road_x_meters REAL,
+              road_y_meters REAL
             )
           ''');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_hazards_class_timestamp ON $tableName (class_id, timestamp)');
@@ -121,28 +124,38 @@ class HazardRepository {
 
   /// Checks independent repository-level spatio-temporal deduplication (defense in depth):
   /// Returns `true` if an existing incident of the same [classId] is within 15 meters AND within 8.0 seconds.
+  /// When GPS is NULL, calculates metric Euclidean distance on the road plane (road_x_meters, road_y_meters).
   /// This check does NOT depend on TrackID.
   bool isDuplicateIncident({
     required int classId,
     required DateTime timestamp,
-    required double latitude,
-    required double longitude,
+    double? latitude,
+    double? longitude,
+    double? roadXMeters,
+    double? roadYMeters,
   }) {
     for (final h in _memoryCache) {
       if (h.classId != classId) continue;
       final elapsedSec = timestamp.difference(h.timestamp).inMilliseconds.abs() / 1000.0;
       if (elapsedSec >= 8.0) continue;
 
-      if (latitude != 0.0 && h.latitude != 0.0) {
+      if (latitude != null && longitude != null && h.latitude != null && h.longitude != null) {
         final dist = Geolocator.distanceBetween(
-          h.latitude,
-          h.longitude,
+          h.latitude!,
+          h.longitude!,
           latitude,
           longitude,
         );
         if (dist <= 15.0) return true;
-      } else {
-        // Fallback to temporal suppression if GPS coordinates are unavailable
+      } else if (roadXMeters != null && roadYMeters != null && h.roadXMeters != null && h.roadYMeters != null) {
+        // When GPS is NULL, use Euclidean metric distance on road plane (road_x_meters, road_y_meters)
+        final dx = roadXMeters - h.roadXMeters!;
+        final dy = roadYMeters - h.roadYMeters!;
+        final roadDist = sqrt(dx * dx + dy * dy);
+        if (roadDist <= 15.0) return true;
+      } else if (latitude == null && longitude == null && h.latitude == null && h.longitude == null &&
+                 roadXMeters == null && h.roadXMeters == null) {
+        // Fallback: If both GPS and road coordinates are completely absent, suppress within 8 seconds
         return true;
       }
     }
@@ -185,8 +198,8 @@ class HazardRepository {
         finalFile = File(hazard.snapshotPath!);
       }
 
-      // Check speed gate (suppress logging if stationary / parking speed < 5 km/h, unless GPS zeroed in tests)
-      if (hazard.speedKmh < 5.0 && hazard.latitude != 0.0) {
+      // Check speed gate (suppress logging if stationary / parking speed < 5 km/h, unless GPS is null or in test mode)
+      if (hazard.speedKmh < 5.0 && hazard.latitude != null && hazard.latitude != 0.0) {
         if (renameOccurred && finalFile != null && finalFile.existsSync()) {
           finalFile.deleteSync();
         }
@@ -200,6 +213,8 @@ class HazardRepository {
         timestamp: hazard.timestamp,
         latitude: hazard.latitude,
         longitude: hazard.longitude,
+        roadXMeters: hazard.roadXMeters,
+        roadYMeters: hazard.roadYMeters,
       )) {
         if (renameOccurred && finalFile != null && finalFile.existsSync()) {
           finalFile.deleteSync();

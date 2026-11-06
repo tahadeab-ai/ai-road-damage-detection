@@ -29,12 +29,14 @@ void main() {
               defect_class TEXT NOT NULL,
               class_id INTEGER NOT NULL,
               confidence REAL NOT NULL,
-              latitude REAL NOT NULL,
-              longitude REAL NOT NULL,
+              latitude REAL,
+              longitude REAL,
               speed_kmh REAL NOT NULL,
               timestamp TEXT NOT NULL,
               address TEXT,
-              snapshot_path TEXT
+              snapshot_path TEXT,
+              road_x_meters REAL,
+              road_y_meters REAL
             )
           ''');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_hazards_class_timestamp ON hazards (class_id, timestamp)');

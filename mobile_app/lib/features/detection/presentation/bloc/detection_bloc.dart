@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
 import '../../../../core/utils/camera_occlusion_detector.dart';
+import '../../../../core/utils/detection_filter.dart';
 import '../../../../core/utils/image_processor.dart';
 import '../../../../core/utils/road_surface_gate.dart';
 import '../../../../core/utils/snapshot_capture_service.dart';
@@ -16,22 +17,27 @@ import '../../domain/models/road_hazard.dart';
 import 'detection_event.dart';
 import 'detection_state.dart';
 
+/// Debug flag: Set to true only during development benchmarking or regression validation.
+/// In production and release builds, TFLite is the exclusive inference path.
+const bool kDebugUseOnnx = false;
+
 /// Production ADAS Detection BLoC for RoadGuard AI V1.2.
 /// Coordinates orientation-aware preprocessing, camera occlusion gating,
-/// multi-color-space road surface verification, real ONNX model inference,
-/// spatio-temporal tracking, and offline incident logging.
+/// multi-color-space road surface verification, real-time TFLite model inference,
+/// time-based tracking, and offline incident logging with nullable GPS.
 class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
-  final OnnxInferenceEngine onnxEngine;
-  final TfliteEngine? tfliteEngine;
+  final TfliteEngine tfliteEngine;
+  final OnnxInferenceEngine? debugOnnxEngine;
   final GpsService gpsService;
   final HazardRepository hazardRepository;
   final AlertCooldownManager _alertManager = AlertCooldownManager();
   final RoadSurfaceGate _roadSurfaceGate = RoadSurfaceGate(historySize: 5);
   final TemporalFilter _temporalFilter = TemporalFilter(
     iouThreshold: 0.35,
-    emaAlpha: 0.60,
-    persistenceMs: 500,
-    confirmationStreak: 3,
+    emaAlpha: 0.65,
+    confirmationWindowMs: 150,
+    lostGraceThresholdMs: 800,
+    removalGraceThresholdMs: 3000,
   );
 
   StreamSubscription<GpsData>? _gpsSubscription;
@@ -39,8 +45,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
   DateTime _lastFrameTime = DateTime.now();
 
   DetectionBloc({
-    required this.onnxEngine,
-    this.tfliteEngine,
+    required this.tfliteEngine,
+    this.debugOnnxEngine,
     required this.gpsService,
     required this.hazardRepository,
   }) : super(DetectionState.initial()) {
@@ -58,8 +64,13 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     Emitter<DetectionState> emit,
   ) async {
     try {
-      // 1. Initialize ONNX runtime engine with multi-threaded CPU NEON provider
-      await onnxEngine.initialize(provider: HardwareExecutionProvider.cpu, numThreads: 4);
+      // 1. Initialize primary on-device TFLite engine via 4-tier delegate ladder
+      await tfliteEngine.initialize();
+
+      // Debug-only engine initialization
+      if (kDebugUseOnnx && debugOnnxEngine != null) {
+        await debugOnnxEngine!.initialize(provider: HardwareExecutionProvider.cpu, numThreads: 4);
+      }
 
       // 2. Initialize secondary subsystems
       await hazardRepository.initialize();
@@ -80,6 +91,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         isMuted: _alertManager.isMuted,
       ));
     } catch (e) {
+      debugPrint('[DetectionBloc] Initialization notice: $e');
       emit(state.copyWith(isInitialized: true, isStreaming: true));
     }
   }
@@ -150,7 +162,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final tPre = sw0.elapsedMilliseconds;
 
       final sw1 = Stopwatch()..start();
-      // 2. Camera Occlusion Guard (Catches finger, palm, lens cover, pitch black via 32x32 variance grid)
+      // 2. Camera Occlusion Guard (32x32 variance grid)
       final occlusion = CameraOcclusionDetector.checkOcclusion(float32Buffer);
       final double tOccMs = sw1.elapsedMicroseconds / 1000.0;
 
@@ -176,7 +188,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       }
 
       final sw2 = Stopwatch()..start();
-      // 3. Deterministic Road Surface Gatekeeper (Multi-color-space HSL, YCbCr, texture analysis)
+      // 3. Deterministic Road Surface Gatekeeper
       final roadEval = _roadSurfaceGate.evaluateSurface(float32Buffer, occlusion: occlusion);
       final double tGateMs = sw2.elapsedMicroseconds / 1000.0;
 
@@ -202,21 +214,40 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       }
 
       final sw3 = Stopwatch()..start();
-      // 4. Real ONNX Edge Model Inference (YOLO11n 4-class detector)
+      // 4. Primary TFLite On-Device Inference
       List<DetectionResult> rawDetections = [];
-      if (onnxEngine.isModelLoaded) {
-        rawDetections = await onnxEngine.runInference(
+      String delegateUsed = tfliteEngine.activeDelegateName;
+
+      if (event.image.planes.length >= 3 && tfliteEngine.isModelLoaded) {
+        final (tfliteDetections, timings) = await tfliteEngine.runInferenceOnYuv(
+          yPlane: event.image.planes[0].bytes,
+          uPlane: event.image.planes[1].bytes,
+          vPlane: event.image.planes[2].bytes,
+          srcWidth: event.image.width,
+          srcHeight: event.image.height,
+          yRowStride: event.image.planes[0].bytesPerRow,
+          uvRowStride: event.image.planes[1].bytesPerRow,
+          uvPixelStride: event.image.planes[1].bytesPerPixel ?? 1,
+          sensorOrientation: event.sensorOrientation,
+          confThreshold: state.confidenceThreshold,
+          iouThreshold: 0.35,
+        );
+        rawDetections = tfliteDetections;
+        delegateUsed = timings.delegateName;
+      } else if (kDebugUseOnnx && debugOnnxEngine != null && debugOnnxEngine!.isModelLoaded) {
+        rawDetections = await debugOnnxEngine!.runInference(
           float32Buffer,
           confThreshold: state.confidenceThreshold,
           iouThreshold: 0.35,
           roadRoiTop: 0.35,
         );
+        delegateUsed = 'onnx-debug';
       }
-      final tOnnx = sw3.elapsedMilliseconds;
+      final tInfer = sw3.elapsedMilliseconds;
       stopwatch.stop();
 
       final latencyMs = stopwatch.elapsedMilliseconds;
-      debugPrint('[Profiling] Total: ${latencyMs}ms (Pre: ${tPre}ms, Occ: ${tOccMs.toStringAsFixed(2)}ms, Gate: ${tGateMs.toStringAsFixed(2)}ms, ONNX: ${tOnnx}ms)');
+      debugPrint('[Profiling] Total: ${latencyMs}ms (Pre: ${tPre}ms, Occ: ${tOccMs.toStringAsFixed(2)}ms, Gate: ${tGateMs.toStringAsFixed(2)}ms, Infer [$delegateUsed]: ${tInfer}ms)');
 
       if (rawDetections.isNotEmpty) {
         for (final d in rawDetections) {
@@ -230,7 +261,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       _lastFrameTime = now;
       final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
 
-      // 6. Temporal Tracking & Coordinate EMA Smoothing with Ego-Motion & Appearance Re-ID
+      // 6. Time-based Temporal Tracking with Ego-Motion & Appearance Re-ID
       final bool isGpsDegraded = !state.gpsData.isGpsLocked ||
           (state.gpsData.latitude == 0.0 && state.gpsData.longitude == 0.0);
       final double speedMps = state.gpsData.speedKmh / 3.6;
@@ -244,7 +275,6 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       );
 
       // 7. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
-      // Audio alerts muted above 8 km/h per Inspection Mode operating regime
       if (state.gpsData.speedKmh <= 8.0) {
         await _alertManager.evaluateAlerts(
           detections: trackedList,
@@ -253,23 +283,31 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         );
       }
 
-      // 8. Check for confirmed critical hazards (for visual HUD banners)
+      // 8. Check for confirmed critical hazards
       DetectionResult? criticalAlert;
       final criticalTracked = trackedList.where((t) => t.isCritical).toList();
       if (criticalTracked.isNotEmpty) {
         criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // 9. Persist confirmed hazard incidents (Strictly 1 record per unique physical track)
-      // Disables persistent logging if GPS is degraded or speed exceeds inspection mode
+      // 9. Persist confirmed hazard incidents with nullable GPS (Offline-first)
+      // Removes previous GPS-suppression block: persists even when GPS is cold/null
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
-      if (confirmedTracks.isNotEmpty && !isGpsDegraded && state.gpsData.speedKmh <= 8.0) {
+      if (confirmedTracks.isNotEmpty) {
         for (final track in confirmedTracks) {
           if (track.hasBeenLogged) continue;
           track.hasBeenLogged = true;
 
           final det = track.toDetectionResult();
+
+          // Apply explicit logging filter floor
+          final logEval = DetectionFilter.evaluate(
+            rect: det.normalizedRect,
+            classId: det.classId,
+            confidence: det.confidence,
+          );
+          if (!logEval.isValidForLogging) continue;
 
           final snapshotPath = await SnapshotCaptureService.captureHazardSnapshot(
             rgbBuffer: float32Buffer,
@@ -279,12 +317,15 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           final hazard = RoadHazard.fromDetection(
             id: '${track.formattedTrackId}_${det.classId}_${now.millisecondsSinceEpoch ~/ 1000}',
             detection: det,
-            latitude: state.gpsData.latitude,
-            longitude: state.gpsData.longitude,
+            latitude: state.gpsData.isGpsLocked ? state.gpsData.latitude : null,
+            longitude: state.gpsData.isGpsLocked ? state.gpsData.longitude : null,
             speedKmh: state.gpsData.speedKmh,
             address: state.gpsData.address,
             snapshotPath: snapshotPath,
+            roadXMeters: track.roadCoordsMeters?.dx,
+            roadYMeters: track.roadCoordsMeters?.dy,
           );
+
           final logged = await hazardRepository.persistHazardAtomically(hazard: hazard);
           if (logged) loggedCount++;
         }
@@ -302,14 +343,14 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         isRoadDetected: true,
         sceneStateIndex: sceneIdx,
         detections: rawDetections,
-        trackedDetections: List.from(trackedList),
-        inferenceLatencyMs: latencyMs,
-        fps: double.parse(fps.toStringAsFixed(1)),
+        trackedDetections: trackedList,
         criticalHazardAlert: () => criticalAlert,
+        inferenceLatencyMs: stopwatch.elapsedMilliseconds,
+        fps: double.parse(fps.toStringAsFixed(1)),
         totalLoggedCount: loggedCount,
       ));
-    } catch (_) {
-      // Prevent crashing live camera loop on unhandled frame glitch
+    } catch (e, st) {
+      debugPrint('[DetectionBloc] Frame processing error: $e\n$st');
     } finally {
       _isProcessingFrame = false;
     }
@@ -319,9 +360,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
   Future<void> close() {
     _gpsSubscription?.cancel();
     _alertManager.dispose();
-    onnxEngine.dispose();
-    tfliteEngine?.dispose();
-    gpsService.dispose();
+    tfliteEngine.close();
+    debugOnnxEngine?.dispose();
     return super.close();
   }
 }

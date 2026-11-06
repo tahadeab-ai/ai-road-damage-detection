@@ -45,7 +45,7 @@ void main() {
       // Successfully maintains visual IoU association without crashing or metric translation drift
       expect(r2.length, equals(1));
       expect(r2.first.trackingId, equals(trackId));
-      expect(r2.first.streak, equals(2));
+      expect(r2.first.associationCount, equals(2));
       expect(r2.first.isTracking, isTrue);
     });
   });

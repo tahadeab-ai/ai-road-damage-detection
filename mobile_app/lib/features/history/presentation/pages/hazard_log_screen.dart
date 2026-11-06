@@ -321,7 +321,11 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
                             const Icon(Icons.navigation_outlined, size: 13, color: AppColors.textSecondary),
                             const SizedBox(width: 4),
                             Text(
-                              '${hazard.latitude.toStringAsFixed(4)}, ${hazard.longitude.toStringAsFixed(4)}',
+                              hazard.latitude != null && hazard.longitude != null
+                                  ? '${hazard.latitude!.toStringAsFixed(4)}, ${hazard.longitude!.toStringAsFixed(4)}'
+                                  : (hazard.roadYMeters != null
+                                      ? 'Road Y: ${hazard.roadYMeters!.toStringAsFixed(1)}m (GPS Null)'
+                                      : 'Offline (GPS Null)'),
                               style: const TextStyle(color: AppColors.textSecondary, fontSize: 10, fontFamily: 'monospace'),
                             ),
                             const Spacer(),
@@ -480,7 +484,11 @@ class _HazardLogScreenState extends State<HazardLogScreen> {
                       const SizedBox(height: 8),
                       _buildDetailRow(
                         Icons.navigation_outlined,
-                        '${AppStrings.coordinates}: ${hazard.latitude.toStringAsFixed(5)}, ${hazard.longitude.toStringAsFixed(5)}',
+                        hazard.latitude != null && hazard.longitude != null
+                            ? '${AppStrings.coordinates}: ${hazard.latitude!.toStringAsFixed(5)}, ${hazard.longitude!.toStringAsFixed(5)}'
+                            : (hazard.roadYMeters != null
+                                ? '${AppStrings.coordinates}: Road-Plane (X: ${hazard.roadXMeters?.toStringAsFixed(1) ?? "0.0"}m, Y: ${hazard.roadYMeters!.toStringAsFixed(1)}m) [GPS Null]'
+                                : '${AppStrings.coordinates}: Offline (GPS Null)'),
                       ),
                       const SizedBox(height: 8),
                       _buildDetailRow(

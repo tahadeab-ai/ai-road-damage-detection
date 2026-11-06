@@ -93,7 +93,7 @@ void main() {
       final r1 = filter.processFrame([det1], timestamp: now, rgbBuffer: buffer);
       expect(r1.length, equals(1));
       final id1 = r1.first.trackingId;
-      expect(r1.first.streak, equals(1));
+      expect(r1.first.associationCount, equals(1));
       expect(r1.first.appearanceDescriptor, isNotNull);
 
       // Frame 2: Shifted slightly (matching appearance)
@@ -110,7 +110,7 @@ void main() {
       );
       expect(r2.length, equals(1));
       expect(r2.first.trackingId, equals(id1));
-      expect(r2.first.streak, equals(2));
+      expect(r2.first.associationCount, equals(2));
     });
 
     test('TemporalFilter rejects association when defect class or appearance diverges drastically', () {

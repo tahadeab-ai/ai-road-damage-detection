@@ -88,3 +88,5 @@ evidence/live_roadguard_screen.png
 
 # Reference repositories for analysis (DO NOT COMMIT)
 reference/
+uv.lock
+

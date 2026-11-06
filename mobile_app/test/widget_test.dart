@@ -61,7 +61,8 @@ void main() {
         className: 'Pothole',
         confidence: 0.85,
         smoothedRect: const Rect.fromLTWH(0.25, 0.50, 0.50, 0.25),
-        streak: 3,
+        associationCount: 3,
+        lifecycle: TrackingLifecycle.confirmed,
       );
 
       final painter = BBoxOverlayPainter(
