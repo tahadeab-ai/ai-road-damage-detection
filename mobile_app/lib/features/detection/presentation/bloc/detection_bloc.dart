@@ -202,6 +202,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       }
 
       emit(state.copyWith(
+        isRoadDetected: isRoad,
         detections: rawDetections,
         trackedDetections: List.from(trackedList),
         inferenceLatencyMs: latencyMs,

@@ -36,8 +36,12 @@ class CameraHudOverlay extends StatelessWidget {
                 // 1. Top Automotive Telemetry HUD Header (Overflow-Proof via FittedBox)
                 _buildTopHudBar(context),
 
-                // 2. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
-                if (state.criticalHazardAlert != null)
+                // 2. Scene Intelligence Status Chip (V1.1 UI/UX)
+                _buildSceneStatusChip(context),
+
+                // 3. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
+                // Suppressed if off-road to eliminate false alarms
+                if (state.criticalHazardAlert != null && state.isRoadDetected)
                   _buildCriticalWarningBanner(context),
 
                 const Spacer(),
@@ -258,6 +262,85 @@ class CameraHudOverlay extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSceneStatusChip(BuildContext context) {
+    final bool isRoad = state.isRoadDetected;
+    final bool isTracking = state.trackedDetections.any((t) => t.isConfirmed);
+    final bool hasDetections = state.trackedDetections.isNotEmpty;
+
+    String statusText;
+    IconData statusIcon;
+    Color statusColor;
+
+    if (!isRoad) {
+      statusText = AppStrings.sceneRoadNotDetected;
+      statusIcon = Icons.visibility_off_rounded;
+      statusColor = AppColors.warning;
+    } else if (isTracking) {
+      statusText = AppStrings.sceneTrackingHazard;
+      statusIcon = Icons.track_changes_rounded;
+      statusColor = AppColors.d40Pothole;
+    } else if (hasDetections) {
+      statusText = AppStrings.sceneHazardDetected;
+      statusIcon = Icons.warning_amber_rounded;
+      statusColor = AppColors.cyanAccent;
+    } else {
+      statusText = AppStrings.sceneRoadDetected;
+      statusIcon = Icons.navigation_rounded;
+      statusColor = AppColors.successGps;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black45,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: statusColor.withValues(alpha: 0.6), width: 1.0),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(statusIcon, color: statusColor, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  statusText,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (!isRoad) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      AppStrings.isArabic ? 'متوقف' : 'PAUSED',
+                      style: const TextStyle(
+                        color: AppColors.warning,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),

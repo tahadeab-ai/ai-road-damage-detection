@@ -267,6 +267,7 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
                             animationValue: _animController.value,
                             cameraAspectRatio: previewAspect,
                             roadRoiTop: 0.35,
+                            isRoadDetected: state.isRoadDetected,
                           ),
                         );
                       },

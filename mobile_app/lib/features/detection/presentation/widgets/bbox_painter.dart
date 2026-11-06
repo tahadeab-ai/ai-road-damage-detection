@@ -14,6 +14,7 @@ class BBoxOverlayPainter extends CustomPainter {
   final double animationValue;
   final double? cameraAspectRatio;
   final double roadRoiTop;
+  final bool isRoadDetected;
 
   BBoxOverlayPainter({
     required this.trackedDetections,
@@ -21,6 +22,7 @@ class BBoxOverlayPainter extends CustomPainter {
     this.animationValue = 1.0,
     this.cameraAspectRatio,
     this.roadRoiTop = 0.35,
+    this.isRoadDetected = true,
   });
 
   @override
@@ -29,6 +31,12 @@ class BBoxOverlayPainter extends CustomPainter {
 
     // 1. Draw subtle Automotive Road ROI guide line
     _drawRoadRoiHorizon(canvas, size);
+
+    // If road is not detected, suppress all damage boxes to prevent false alarms
+    if (!isRoadDetected) {
+      _drawRoadNotDetectedWatermark(canvas, size);
+      return;
+    }
 
     // 2. Render top 3 highest-confidence defects
     if (trackedDetections.isNotEmpty) {
@@ -81,6 +89,51 @@ class BBoxOverlayPainter extends CustomPainter {
 
     canvas.drawLine(Offset(16, roiY - 6), Offset(16, roiY + 6), tickPaint);
     canvas.drawLine(Offset(size.width - 16, roiY - 6), Offset(size.width - 16, roiY + 6), tickPaint);
+  }
+
+  void _drawRoadNotDetectedWatermark(Canvas canvas, Size size) {
+    // Draw subtle, non-intrusive automotive HUD watermark indicating detection paused
+    final bgPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.40)
+      ..style = PaintingStyle.fill;
+
+    const double pillW = 220.0;
+    const double pillH = 36.0;
+    final pillRect = Rect.fromCenter(
+      center: Offset(size.width / 2.0, size.height * 0.45),
+      width: pillW,
+      height: pillH,
+    );
+
+    canvas.drawRRect(RRect.fromRectAndRadius(pillRect, const Radius.circular(18)), bgPaint);
+
+    final borderPaint = Paint()
+      ..color = AppColors.warning.withValues(alpha: 0.60)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawRRect(RRect.fromRectAndRadius(pillRect, const Radius.circular(18)), borderPaint);
+
+    final textSpan = TextSpan(
+      text: '🚫 ${AppStrings.sceneRoadNotDetected}',
+      style: const TextStyle(
+        color: AppColors.warning,
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.4,
+      ),
+    );
+
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: AppStrings.direction,
+      textAlign: TextAlign.center,
+    )..layout();
+
+    final textOffset = Offset(
+      pillRect.center.dx - (textPainter.width / 2.0),
+      pillRect.center.dy - (textPainter.height / 2.0),
+    );
+    textPainter.paint(canvas, textOffset);
   }
 
   void _paintTrackedBox(Canvas canvas, Size size, TrackedDetection track) {

@@ -17,6 +17,8 @@ class DetectionState extends Equatable {
   final int totalLoggedCount;
   final bool isMuted;
   final bool isTorchOn;
+  final bool isRoadDetected;
+  final int sceneStateIndex; // 0: checking, 1: road, 2: nonRoad, 3: detecting, 4: hazardDetected, 5: trackingHazard
   final Failure? failure;
 
   const DetectionState({
@@ -32,6 +34,8 @@ class DetectionState extends Equatable {
     required this.totalLoggedCount,
     this.isMuted = false,
     this.isTorchOn = false,
+    this.isRoadDetected = true,
+    this.sceneStateIndex = 1,
     this.failure,
   });
 
@@ -51,6 +55,8 @@ class DetectionState extends Equatable {
       totalLoggedCount: 0,
       isMuted: false,
       isTorchOn: false,
+      isRoadDetected: true,
+      sceneStateIndex: 0,
       failure: null,
     );
   }
@@ -68,6 +74,8 @@ class DetectionState extends Equatable {
     int? totalLoggedCount,
     bool? isMuted,
     bool? isTorchOn,
+    bool? isRoadDetected,
+    int? sceneStateIndex,
     Failure? failure,
   }) {
     return DetectionState(
@@ -83,6 +91,8 @@ class DetectionState extends Equatable {
       totalLoggedCount: totalLoggedCount ?? this.totalLoggedCount,
       isMuted: isMuted ?? this.isMuted,
       isTorchOn: isTorchOn ?? this.isTorchOn,
+      isRoadDetected: isRoadDetected ?? this.isRoadDetected,
+      sceneStateIndex: sceneStateIndex ?? this.sceneStateIndex,
       failure: failure ?? this.failure,
     );
   }
@@ -101,6 +111,8 @@ class DetectionState extends Equatable {
         totalLoggedCount,
         isMuted,
         isTorchOn,
+        isRoadDetected,
+        sceneStateIndex,
         failure,
       ];
 }

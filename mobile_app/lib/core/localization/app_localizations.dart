@@ -33,6 +33,20 @@ class AppStrings {
   // Language Toggle Button Label
   static String get languageToggleLabel => isArabic ? 'EN' : 'عربي';
 
+  // Scene Intelligence Status (V1.1 UI/UX)
+  static String get sceneChecking => isArabic ? 'فحص المشهد...' : 'Checking scene...';
+  static String get sceneRoadDetected => isArabic ? 'تم رصد الطريق' : 'Road detected';
+  static String get sceneRoadNotDetected => isArabic ? 'لم يتم رصد طريق' : 'Road not detected';
+  static String get sceneDetectingDamage => isArabic ? 'مسح أضرار الطريق...' : 'Detecting road damage';
+  static String get sceneHazardDetected => isArabic ? 'تم رصد ضرر طريق' : 'Hazard detected';
+  static String get sceneTrackingHazard => isArabic ? 'تتبع الضرر مستمر' : 'Tracking hazard';
+
+  // Tracking Status Badges (V1.1 UI/UX)
+  static String get trackStatusCandidate => isArabic ? 'مرشح' : 'CANDIDATE';
+  static String get trackStatusTracking => isArabic ? 'تتبع' : 'TRACKING';
+  static String get trackStatusConfirmed => isArabic ? 'مؤكد' : 'CONFIRMED';
+  static String get trackStatusLost => isArabic ? 'مفقود' : 'LOST';
+
   // Defect Class Names
   static String getDefectName(int classId) {
     if (isArabic) {
