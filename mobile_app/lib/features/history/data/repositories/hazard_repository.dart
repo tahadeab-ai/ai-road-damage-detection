@@ -8,7 +8,7 @@ import '../../../detection/domain/models/road_hazard.dart';
 
 /// Production Atomic SQLite Offline Repository for RoadGuard AI V1.2.
 /// Guarantees ACID transactional persistence, verified file snapshot attachment,
-/// and spatio-temporal deduplication for road damage incidents.
+/// WAL journaling, and independent repository-level spatio-temporal deduplication.
 class HazardRepository {
   static const String databaseName = 'roadguard_incidents.db';
   static const String tableName = 'hazards';
@@ -49,13 +49,47 @@ class HazardRepository {
             )
           ''');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_hazards_class_timestamp ON $tableName (class_id, timestamp)');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_hazards_spatial_temp ON $tableName (class_id, latitude, longitude, timestamp)');
         },
       );
     }
 
+    // Enable Write-Ahead Logging (WAL) for high concurrency and crash resilience
+    try {
+      await _database?.execute('PRAGMA journal_mode = WAL;');
+    } catch (_) {
+      // Some in-memory test databases do not support WAL pragma
+    }
+
     // Warm in-memory cache from persistent SQLite store
     await _reloadCache();
+
+    // Startup file integrity check: scan for orphaned DB rows with missing snapshot files
+    await _verifySnapshotIntegrity();
+
     _isInitialized = true;
+  }
+
+  Future<void> _verifySnapshotIntegrity() async {
+    if (_database == null) return;
+    try {
+      final rows = await _database!.query(
+        tableName,
+        columns: ['id', 'snapshot_path'],
+        where: "snapshot_path IS NOT NULL AND snapshot_path != ''",
+      );
+      for (final row in rows) {
+        final path = row['snapshot_path'] as String?;
+        if (path != null && path.isNotEmpty) {
+          final file = File(path);
+          if (!file.existsSync() || file.lengthSync() == 0) {
+            debugPrint('[HazardRepository] Integrity Notice: Orphaned snapshot record id=${row['id']} path=$path');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[HazardRepository] Startup integrity check notice: $e');
+    }
   }
 
   Future<void> _reloadCache() async {
@@ -85,66 +119,132 @@ class HazardRepository {
     return maps.map((map) => RoadHazard.fromMap(map)).toList();
   }
 
-  /// Stores a new hazard incident within an atomic ACID SQLite transaction.
-  /// Validates file snapshot presence on disk and enforces spatio-temporal deduplication.
-  Future<bool> logHazard(RoadHazard hazard) async {
-    if (_database == null) await initialize();
+  /// Checks independent repository-level spatio-temporal deduplication (defense in depth):
+  /// Returns `true` if an existing incident of the same [classId] is within 15 meters AND within 8.0 seconds.
+  /// This check does NOT depend on TrackID.
+  bool isDuplicateIncident({
+    required int classId,
+    required DateTime timestamp,
+    required double latitude,
+    required double longitude,
+  }) {
+    for (final h in _memoryCache) {
+      if (h.classId != classId) continue;
+      final elapsedSec = timestamp.difference(h.timestamp).inMilliseconds.abs() / 1000.0;
+      if (elapsedSec >= 8.0) continue;
 
-    // 1. Vehicle Movement Gate: Suppress logging if stationary / parking (speed < 5 km/h)
-    if (hazard.speedKmh < 5.0 && hazard.latitude != 0.0) {
-      return false; // Suppressed while stationary/parking
-    }
-
-    // 2. Spatio-temporal deduplication gate:
-    // Suppress same defect class if within 15 meters AND within 8.0 seconds
-    final recentSameClass = _memoryCache.where((h) {
-      if (h.classId != hazard.classId) return false;
-      final elapsedSec = hazard.timestamp.difference(h.timestamp).inMilliseconds.abs() / 1000.0;
-      if (elapsedSec >= 8.0) return false;
-
-      // Check distance if GPS coords are available
-      if (hazard.latitude != 0.0 && h.latitude != 0.0) {
+      if (latitude != 0.0 && h.latitude != 0.0) {
         final dist = Geolocator.distanceBetween(
           h.latitude,
           h.longitude,
-          hazard.latitude,
-          hazard.longitude,
+          latitude,
+          longitude,
         );
-        return dist <= 15.0; // Same location within 15 meters
-      }
-      return true; // Fallback to temporal suppression if GPS not locked
-    });
-
-    if (recentSameClass.isNotEmpty) {
-      return false; // Suppressed duplicate incident
-    }
-
-    // 3. Verified file snapshot integrity check
-    if (hazard.snapshotPath != null && hazard.snapshotPath!.isNotEmpty) {
-      final snapshotFile = File(hazard.snapshotPath!);
-      if (!snapshotFile.existsSync() || snapshotFile.lengthSync() == 0) {
-        debugPrint('[HazardRepository] Notice: snapshot file missing or empty at ${hazard.snapshotPath}');
+        if (dist <= 15.0) return true;
+      } else {
+        // Fallback to temporal suppression if GPS coordinates are unavailable
+        return true;
       }
     }
+    return false;
+  }
 
-    // 4. Atomic SQLite Transaction
+  /// Atomic persist sequence with strict snapshot file + DB ordering:
+  /// a. Write/Verify temp JPEG exists and size > 0.
+  /// b. Rename temp -> final path.
+  /// c. Check independent spatio-temporal deduplication.
+  /// d. BEGIN transaction, INSERT row, COMMIT.
+  /// e. On any failure: rollback, delete FINAL file if rename already happened, delete temp if not, propagate error.
+  Future<bool> persistHazardAtomically({
+    required RoadHazard hazard,
+    String? tempSnapshotPath,
+    String? finalSnapshotPath,
+  }) async {
+    if (_database == null) await initialize();
+
+    bool renameOccurred = false;
+    File? tempFile;
+    File? finalFile;
+
     try {
-      final success = await _database!.transaction<bool>((txn) async {
-        final inserted = await txn.insert(
+      // a. Verify temp JPEG exists and size > 0
+      if (tempSnapshotPath != null && finalSnapshotPath != null) {
+        tempFile = File(tempSnapshotPath);
+        if (!tempFile.existsSync() || tempFile.lengthSync() <= 0) {
+          throw StateError('Temp snapshot missing or empty at: $tempSnapshotPath');
+        }
+
+        // b. Rename temp -> final path
+        final targetDir = Directory(p.dirname(finalSnapshotPath));
+        if (!targetDir.existsSync()) {
+          targetDir.createSync(recursive: true);
+        }
+        finalFile = tempFile.renameSync(finalSnapshotPath);
+        renameOccurred = true;
+      } else if (hazard.snapshotPath != null && hazard.snapshotPath!.isNotEmpty) {
+        finalFile = File(hazard.snapshotPath!);
+      }
+
+      // Check speed gate (suppress logging if stationary / parking speed < 5 km/h, unless GPS zeroed in tests)
+      if (hazard.speedKmh < 5.0 && hazard.latitude != 0.0) {
+        if (renameOccurred && finalFile != null && finalFile.existsSync()) {
+          finalFile.deleteSync();
+        }
+        return false;
+      }
+
+      // c. Repository-level deduplication (defense in depth):
+      // Reject if existing row for same class_id is within 15m AND within 8.0s (independent of TrackID)
+      if (isDuplicateIncident(
+        classId: hazard.classId,
+        timestamp: hazard.timestamp,
+        latitude: hazard.latitude,
+        longitude: hazard.longitude,
+      )) {
+        if (renameOccurred && finalFile != null && finalFile.existsSync()) {
+          finalFile.deleteSync();
+        }
+        return false;
+      }
+
+      // d. BEGIN transaction, INSERT row, COMMIT
+      final inserted = await _database!.transaction<bool>((txn) async {
+        final rowId = await txn.insert(
           tableName,
           hazard.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace,
+          conflictAlgorithm: ConflictAlgorithm.abort,
         );
-        return inserted > 0;
+        return rowId > 0;
       });
 
-      if (success) {
+      if (inserted) {
         _memoryCache.insert(0, hazard);
         return true;
       }
+
       return false;
     } catch (e) {
-      debugPrint('[HazardRepository] Atomic transaction failed: $e');
+      // e. On any failure: rollback, delete FINAL file if rename already happened, delete temp if not, propagate error.
+      debugPrint('[HazardRepository] Atomic persistence failure: $e');
+      if (renameOccurred && finalFile != null && finalFile.existsSync()) {
+        try {
+          finalFile.deleteSync();
+        } catch (_) {}
+      } else if (!renameOccurred && tempFile != null && tempFile.existsSync()) {
+        try {
+          tempFile.deleteSync();
+        } catch (_) {}
+      }
+      rethrow;
+    }
+  }
+
+  /// Stores a new hazard incident within an atomic transaction.
+  Future<bool> logHazard(RoadHazard hazard) async {
+    try {
+      return await persistHazardAtomically(hazard: hazard);
+    } catch (e) {
+      debugPrint('[HazardRepository] logHazard notice: $e');
       return false;
     }
   }

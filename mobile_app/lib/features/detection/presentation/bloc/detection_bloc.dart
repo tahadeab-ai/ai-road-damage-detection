@@ -230,15 +230,28 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       _lastFrameTime = now;
       final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
 
-      // 6. Temporal Tracking & Coordinate EMA Smoothing
-      final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
+      // 6. Temporal Tracking & Coordinate EMA Smoothing with Ego-Motion & Appearance Re-ID
+      final bool isGpsDegraded = !state.gpsData.isGpsLocked ||
+          (state.gpsData.latitude == 0.0 && state.gpsData.longitude == 0.0);
+      final double speedMps = state.gpsData.speedKmh / 3.6;
+
+      final trackedList = _temporalFilter.processFrame(
+        rawDetections,
+        timestamp: now,
+        rgbBuffer: float32Buffer,
+        speedMps: speedMps,
+        isGpsDegraded: isGpsDegraded,
+      );
 
       // 7. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
-      await _alertManager.evaluateAlerts(
-        detections: trackedList,
-        currentSpeedKmh: state.gpsData.speedKmh,
-        timestamp: now,
-      );
+      // Audio alerts muted above 8 km/h per Inspection Mode operating regime
+      if (state.gpsData.speedKmh <= 8.0) {
+        await _alertManager.evaluateAlerts(
+          detections: trackedList,
+          currentSpeedKmh: state.gpsData.speedKmh,
+          timestamp: now,
+        );
+      }
 
       // 8. Check for confirmed critical hazards (for visual HUD banners)
       DetectionResult? criticalAlert;
@@ -248,9 +261,10 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       }
 
       // 9. Persist confirmed hazard incidents (Strictly 1 record per unique physical track)
+      // Disables persistent logging if GPS is degraded or speed exceeds inspection mode
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
-      if (confirmedTracks.isNotEmpty) {
+      if (confirmedTracks.isNotEmpty && !isGpsDegraded && state.gpsData.speedKmh <= 8.0) {
         for (final track in confirmedTracks) {
           if (track.hasBeenLogged) continue;
           track.hasBeenLogged = true;
@@ -271,7 +285,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
             address: state.gpsData.address,
             snapshotPath: snapshotPath,
           );
-          final logged = await hazardRepository.logHazard(hazard);
+          final logged = await hazardRepository.persistHazardAtomically(hazard: hazard);
           if (logged) loggedCount++;
         }
       }

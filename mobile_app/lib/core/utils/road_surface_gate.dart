@@ -113,9 +113,10 @@ class RoadSurfaceGate {
     int highSaturationCount = 0;
     int warmWoodCount = 0;
 
-    // Sample every 16th pixel inside Road ROI for deterministic, sub-millisecond throughput
-    const int stepY = 16;
-    const int stepX = 16;
+    // Deterministic 48 rows x 64 cols grid (step 8px) = exactly 3,072 sample points inside Road ROI
+    // (608 - 224) / 8 = 48 rows; (576 - 64) / 8 = 64 columns; 48 * 64 = 3,072 samples
+    const int stepY = 8;
+    const int stepX = 8;
 
     for (int y = roiStartY; y < roiEndY; y += stepY) {
       final int rowOffset = y * inputWidth * 3;

@@ -15,6 +15,7 @@ class BBoxOverlayPainter extends CustomPainter {
   final double? cameraAspectRatio;
   final double roadRoiTop;
   final bool isRoadDetected;
+  final bool showDebugInfo;
 
   BBoxOverlayPainter({
     required this.trackedDetections,
@@ -23,6 +24,7 @@ class BBoxOverlayPainter extends CustomPainter {
     this.cameraAspectRatio,
     this.roadRoiTop = 0.35,
     this.isRoadDetected = true,
+    this.showDebugInfo = false,
   });
 
   @override
@@ -219,15 +221,35 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    // 5. Draw Localized Badge Tag with Track ID & Explicit Percentage (e.g. "#001 حفرة 84%")
-    final String badgeText = AppStrings.getDefectBadge(track.classId, track.confidence);
-    final String labelText = '${track.formattedTrackId} $badgeText';
+    // 5. Draw Localized Badge Tag with Track ID, Standard RDD Code & Explicit Percentage (e.g. "#042 D40 94%")
+    final String rddCode = (track.classId >= 0 && track.classId < 4)
+        ? const ['D00', 'D10', 'D20', 'D40'][track.classId]
+        : 'D??';
+    final int pct = (track.confidence * 100).round();
+    final String labelText = '${track.formattedTrackId} $rddCode $pct%';
     _drawBadge(
       canvas,
       labelText,
       rect.topLeft,
       defectColor.withValues(alpha: alphaFactor),
     );
+
+    // 6. Optional Diagnostics Overlay: State, time since last seen, and road metric coordinates
+    if (showDebugInfo) {
+      final String stateName = track.lifecycle.name.toUpperCase();
+      final String roadStr = track.roadCoordsMeters != null
+          ? '(${track.roadCoordsMeters!.dx.toStringAsFixed(1)}, ${track.roadCoordsMeters!.dy.toStringAsFixed(1)})m'
+          : 'N/A';
+      final int lastSeenMs = DateTime.now().difference(track.lastSeen).inMilliseconds;
+      final String debugText = '$stateName | ${lastSeenMs}ms | $roadStr';
+      _drawBadge(
+        canvas,
+        debugText,
+        rect.bottomLeft + const Offset(0, 4),
+        Colors.cyanAccent.withValues(alpha: 0.85),
+        fontSize: 8.5,
+      );
+    }
   }
 
   void _paintFallbackBox(Canvas canvas, Size size, DetectionResult det) {
@@ -327,10 +349,10 @@ class BBoxOverlayPainter extends CustomPainter {
     }
   }
 
-  void _drawBadge(Canvas canvas, String text, Offset position, Color color) {
-    const textStyle = TextStyle(
+  void _drawBadge(Canvas canvas, String text, Offset position, Color color, {double fontSize = 11.0}) {
+    final textStyle = TextStyle(
       color: Colors.black,
-      fontSize: 11,
+      fontSize: fontSize,
       fontWeight: FontWeight.w900,
       letterSpacing: 0.3,
     );

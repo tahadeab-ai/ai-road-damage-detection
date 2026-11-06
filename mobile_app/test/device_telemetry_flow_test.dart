@@ -1,10 +1,8 @@
 import 'dart:typed_data';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:road_guard_mobile/core/utils/camera_occlusion_detector.dart';
 import 'package:road_guard_mobile/core/utils/road_surface_gate.dart';
 import 'package:road_guard_mobile/features/detection/data/datasources/onnx_inference_engine.dart';
-import 'package:road_guard_mobile/features/detection/domain/models/detection_result.dart';
 
 void main() {
   group('Device Telemetry & Positive Detection Proof Tests', () {
