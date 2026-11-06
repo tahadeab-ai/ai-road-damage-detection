@@ -111,8 +111,10 @@ class CameraOcclusionDetector {
     final double avgB = sampledPixelCount > 0 ? (totalBlue / sampledPixelCount) : 0.0;
 
     // Secondary skin-tone signal: Finger covering lens illuminated by ambient light or torch
-    // Skin shows dominant red with high absorption in blue/green
-    final bool isSkinTone = (avgR > 0.15) && (avgR > avgG * 1.30) && (avgR > avgB * 1.60);
+    // Standard YCbCr skin locus (Cb in [0.34, 0.48], Cr in [0.56, 0.70])
+    final double cb = -0.168736 * avgR - 0.331264 * avgG + 0.500000 * avgB + 0.5;
+    final double cr =  0.500000 * avgR - 0.418688 * avgG - 0.081312 * avgB + 0.5;
+    final bool isSkinTone = (cb >= 0.34 && cb <= 0.48) && (cr >= 0.56 && cr <= 0.70);
 
     // Rule 1: High flat ratio with uniform skin-tone glow (finger on lens)
     if (flatRatio > 0.88 && isSkinTone) {
@@ -125,19 +127,15 @@ class CameraOcclusionDetector {
       );
     }
 
-    // Rule 2: Near total flatness regardless of darkness (lens cap, palm, solid obstacle)
-    if (flatRatio > flatRatioThreshold) {
-      // In genuine night driving, street lamps, headlights, and car reflections preserve variance
-      // Pitch black + flat cells = obstructed lens
-      if (meanLum < 0.06 || flatRatio > 0.95) {
-        return OcclusionResult(
-          isOccluded: true,
-          reason: 'Lens physically covered (texture variance collapsed)',
-          flatCellRatio: flatRatio,
-          meanLuminance: meanLum,
-          isSkinTone: isSkinTone,
-        );
-      }
+    // Rule 2: Dark covered lens (lens cap, palm, pocket, physical obstruction)
+    if (flatRatio > flatRatioThreshold && meanLum < 0.08) {
+      return OcclusionResult(
+        isOccluded: true,
+        reason: 'Lens physically covered (texture variance collapsed)',
+        flatCellRatio: flatRatio,
+        meanLuminance: meanLum,
+        isSkinTone: isSkinTone,
+      );
     }
 
     return OcclusionResult(
