@@ -221,17 +221,17 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    // 5. Draw Localized Badge Tag with Track ID, Standard RDD Code & Explicit Percentage (e.g. "#042 D40 94%")
-    final String rddCode = (track.classId >= 0 && track.classId < 4)
-        ? const ['D00', 'D10', 'D20', 'D40'][track.classId]
-        : 'D??';
+    // 5. Draw Localized Automotive Badge Tag with Track ID, Defect Name & Explicit Percentage
+    // e.g. "#042 حفرة 94%" (Arabic RTL) or "#042 Pothole 94%" (English LTR)
+    final String defectName = AppStrings.getDefectName(track.classId);
     final int pct = (track.confidence * 100).round();
-    final String labelText = '${track.formattedTrackId} $rddCode $pct%';
+    final String labelText = '${track.formattedTrackId} $defectName $pct%';
     _drawBadge(
       canvas,
       labelText,
       rect.topLeft,
       defectColor.withValues(alpha: alphaFactor),
+      screenSize: size,
     );
 
     // 6. Optional Diagnostics Overlay: State, time since last seen, and road metric coordinates
@@ -248,6 +248,7 @@ class BBoxOverlayPainter extends CustomPainter {
         rect.bottomLeft + const Offset(0, 4),
         Colors.cyanAccent.withValues(alpha: 0.85),
         fontSize: 8.5,
+        screenSize: size,
       );
     }
   }
@@ -263,7 +264,13 @@ class BBoxOverlayPainter extends CustomPainter {
     canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(8)), borderPaint);
 
     final String labelText = AppStrings.getDefectBadge(det.classId, det.confidence);
-    _drawBadge(canvas, labelText, rect.topLeft, defectColor);
+    _drawBadge(
+      canvas,
+      labelText,
+      rect.topLeft,
+      defectColor,
+      screenSize: size,
+    );
   }
 
   Rect _mapRect(Rect normRect, Size size) {
@@ -349,7 +356,14 @@ class BBoxOverlayPainter extends CustomPainter {
     }
   }
 
-  void _drawBadge(Canvas canvas, String text, Offset position, Color color, {double fontSize = 11.0}) {
+  void _drawBadge(
+    Canvas canvas,
+    String text,
+    Offset position,
+    Color color, {
+    double fontSize = 11.0,
+    Size? screenSize,
+  }) {
     final textStyle = TextStyle(
       color: Colors.black,
       fontSize: fontSize,
@@ -365,9 +379,19 @@ class BBoxOverlayPainter extends CustomPainter {
 
     final badgeHeight = textPainter.height + 6.0;
     final badgeWidth = textPainter.width + 12.0;
+
+    double left = position.dx;
+    if (screenSize != null && screenSize.width > 0) {
+      left = left.clamp(4.0, max(4.0, screenSize.width - badgeWidth - 4.0));
+    }
+
+    final double top = position.dy - badgeHeight - 4.0 >= 0
+        ? position.dy - badgeHeight - 4.0
+        : position.dy + 4.0;
+
     final badgeRect = Rect.fromLTWH(
-      position.dx,
-      position.dy - badgeHeight - 4.0 >= 0 ? position.dy - badgeHeight - 4.0 : position.dy + 4.0,
+      left,
+      top,
       badgeWidth,
       badgeHeight,
     );
