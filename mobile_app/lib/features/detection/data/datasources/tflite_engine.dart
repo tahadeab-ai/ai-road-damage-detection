@@ -180,9 +180,10 @@ class TfliteEngine {
       }
     }
 
-    // Graceful fallback heuristics for emulator testing without camera hardware
+    // Fallback: If interpreter is unavailable, return empty list (ZERO mock fabrication)
     stopwatch.stop();
-    return _generateMockDetections(confThreshold);
+    debugPrint('[TfliteEngine] Interpreter not available or inference failed; returning empty detections.');
+    return [];
   }
 
   /// Parses raw YOLO11 tensor matrix [8, 8400] into bounding boxes and applies NMS.
@@ -244,34 +245,6 @@ class TfliteEngine {
       iouThreshold: iouThreshold,
       confThreshold: confThreshold,
     );
-  }
-
-  /// Generates demo road damage detections for offline simulator preview.
-  List<DetectionResult> _generateMockDetections(double confThreshold) {
-    final rand = Random();
-    if (rand.nextDouble() > 0.4) {
-      return []; // Road is clear
-    }
-
-    final classId = rand.nextInt(4);
-    final conf = 0.50 + rand.nextDouble() * 0.45;
-    if (conf < confThreshold) return [];
-
-    final xMin = 0.2 + rand.nextDouble() * 0.4;
-    final yMin = 0.45 + rand.nextDouble() * 0.3;
-    final width = 0.15 + rand.nextDouble() * 0.2;
-    final height = 0.10 + rand.nextDouble() * 0.15;
-
-    final name = classId < _labels.length ? _labels[classId] : 'Road Damage';
-
-    return [
-      DetectionResult(
-        classId: classId,
-        className: name,
-        confidence: conf,
-        normalizedRect: Rect.fromLTWH(xMin, yMin, width, height),
-      ),
-    ];
   }
 
   void dispose() {

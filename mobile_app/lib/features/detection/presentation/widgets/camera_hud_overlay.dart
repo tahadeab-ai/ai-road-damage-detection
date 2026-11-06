@@ -278,8 +278,12 @@ class CameraHudOverlay extends StatelessWidget {
     IconData statusIcon;
     Color statusColor;
 
-    if (!isRoad) {
-      statusText = AppStrings.sceneRoadNotDetected;
+    if (state.sceneStateIndex == 6) {
+      statusText = AppStrings.sceneCameraObstructed;
+      statusIcon = Icons.block_rounded;
+      statusColor = AppColors.d40Pothole;
+    } else if (!isRoad) {
+      statusText = AppStrings.sceneNonRoadSurface;
       statusIcon = Icons.visibility_off_rounded;
       statusColor = AppColors.warning;
     } else if (isTracking) {
