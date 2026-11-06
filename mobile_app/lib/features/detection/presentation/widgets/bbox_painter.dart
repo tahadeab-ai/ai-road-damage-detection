@@ -166,8 +166,9 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    // 5. Draw Localized Badge Tag with Explicit Percentage (e.g. "حفرة 84%")
-    final String labelText = AppStrings.getDefectBadge(track.classId, track.confidence);
+    // 5. Draw Localized Badge Tag with Track ID & Explicit Percentage (e.g. "#001 حفرة 84%")
+    final String badgeText = AppStrings.getDefectBadge(track.classId, track.confidence);
+    final String labelText = '${track.formattedTrackId} $badgeText';
     _drawBadge(
       canvas,
       labelText,

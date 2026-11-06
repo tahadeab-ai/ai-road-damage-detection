@@ -10,7 +10,10 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 import numpy as np
 
 try:
@@ -108,6 +111,8 @@ class RoadDamagePredictor:
         threshold = conf if conf is not None else self.conf_threshold
 
         if isinstance(image_input, (str, Path)):
+            if cv2 is None:
+                raise ImportError("OpenCV (cv2) is required for image file loading. Please install opencv-python-headless.")
             image_path = Path(image_input)
             image_name = image_path.name
             img_bgr = cv2.imread(str(image_path))

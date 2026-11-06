@@ -170,11 +170,15 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // 8. Persist confirmed hazard incidents with 100% guaranteed in-memory snapshot evidence
+      // 8. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
       if (confirmedTracks.isNotEmpty) {
         for (final track in confirmedTracks) {
+          // Strictly prevent duplicate logging for the same physical road damage track
+          if (track.hasBeenLogged) continue;
+          track.hasBeenLogged = true;
+
           final det = track.toDetectionResult();
 
           // 100% Guaranteed Evidence snapshot capture from active frame memory
@@ -184,7 +188,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           );
 
           final hazard = RoadHazard.fromDetection(
-            id: '${track.trackingId}_${det.classId}_${now.millisecondsSinceEpoch ~/ 1000}',
+            id: '${track.formattedTrackId}_${det.classId}_${now.millisecondsSinceEpoch ~/ 1000}',
             detection: det,
             latitude: state.gpsData.latitude,
             longitude: state.gpsData.longitude,

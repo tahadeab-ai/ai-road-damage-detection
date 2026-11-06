@@ -3,6 +3,14 @@ import 'package:flutter/material.dart';
 import '../../features/detection/domain/models/detection_result.dart';
 import 'nms_utils.dart';
 
+/// Explicit 4-stage tracking state machine for road damage detection lifecycle.
+enum TrackingLifecycle {
+  candidate, // Streak < 2: initial provisional detection
+  tracking,  // Streak == 2: actively associated across consecutive frames
+  confirmed, // Streak >= 3: verified physical road defect (logged once)
+  lost,      // Temporarily missed in current frame, sustained within grace period
+}
+
 /// A temporally smoothed, locked, and tracked detection candidate across camera frames.
 class TrackedDetection {
   final int trackingId;
@@ -14,6 +22,8 @@ class TrackedDetection {
   DateTime lastSeen;
   double opacity;
   double velocityDy; // Downward motion velocity per frame in normalized space
+  TrackingLifecycle lifecycle;
+  bool hasBeenLogged; // Prevents duplicate incident creation
 
   TrackedDetection({
     required this.trackingId,
@@ -25,13 +35,27 @@ class TrackedDetection {
     DateTime? lastSeen,
     this.opacity = 1.0,
     this.velocityDy = 0.0,
+    this.lifecycle = TrackingLifecycle.candidate,
+    this.hasBeenLogged = false,
   }) : lastSeen = lastSeen ?? DateTime.now();
 
-  /// Confirmed if tracked across at least 3 consecutive frames (eliminates transient false positives).
-  bool get isConfirmed => streak >= 3;
+  /// Formatted automotive Track ID (e.g., #001, #042)
+  String get formattedTrackId => '#${trackingId.toString().padLeft(3, '0')}';
+
+  /// Confirmed if tracked across at least 3 consecutive frames.
+  bool get isConfirmed => lifecycle == TrackingLifecycle.confirmed || streak >= 3;
 
   /// High-confidence persistent target lock-on.
   bool get isLocked => isConfirmed;
+
+  /// Provisional candidate before multi-frame confirmation.
+  bool get isCandidate => lifecycle == TrackingLifecycle.candidate;
+
+  /// Active tracking phase.
+  bool get isTracking => lifecycle == TrackingLifecycle.tracking;
+
+  /// Missed in recent frame, preserved by temporal buffer grace period.
+  bool get isLost => lifecycle == TrackingLifecycle.lost;
 
   /// Critical hazard: confirmed Pothole (D40) or Alligator Crack (D20).
   bool get isCritical => isConfirmed && (classId == 2 || classId == 3);
@@ -48,7 +72,7 @@ class TrackedDetection {
 
 /// Temporal Filter that associates detections across consecutive frames,
 /// smooths jitter with Exponential Moving Average (EMA), extrapolates downward road motion,
-/// and maintains persistent spatial locks on verified road defects.
+/// manages the 4-stage tracking lifecycle, and prevents duplicate incident creation.
 class TemporalFilter {
   final double iouThreshold;
   final double emaAlpha; // Weight for new frame coordinates (0.0 to 1.0)
@@ -61,7 +85,7 @@ class TemporalFilter {
   TemporalFilter({
     this.iouThreshold = 0.35,
     this.emaAlpha = 0.60,
-    this.persistenceMs = 350,
+    this.persistenceMs = 450,
     this.confirmationStreak = 3,
   });
 
@@ -84,13 +108,13 @@ class TemporalFilter {
         if (matchedIndices.contains(i)) continue;
         final tracked = _trackedPool[i];
 
-        // Must match class
+        // Must match defect class
         if (tracked.classId != raw.classId) continue;
 
         final iou = NmsUtils.calculateIoU(raw.normalizedRect, tracked.smoothedRect);
         final centroidDist = (raw.normalizedRect.center - tracked.smoothedRect.center).distance;
 
-        // Dual association: strong IoU or tight spatial centroid proximity
+        // Dual association: strong bounding box IoU or tight spatial centroid proximity
         final isMatch = (iou > iouThreshold) || (iou > 0.12 && centroidDist < 0.22);
 
         if (isMatch) {
@@ -110,6 +134,15 @@ class TemporalFilter {
         track.lastSeen = now;
         track.streak += 1;
         track.opacity = 1.0;
+
+        // Update tracking lifecycle state
+        if (track.streak >= confirmationStreak) {
+          track.lifecycle = TrackingLifecycle.confirmed;
+        } else if (track.streak == 2) {
+          track.lifecycle = TrackingLifecycle.tracking;
+        } else {
+          track.lifecycle = TrackingLifecycle.candidate;
+        }
 
         // Estimate downward trajectory velocity
         final currentDy = raw.normalizedRect.center.dy - track.smoothedRect.center.dy;
@@ -134,25 +167,27 @@ class TemporalFilter {
             streak: 1,
             lastSeen: now,
             opacity: 1.0,
+            lifecycle: TrackingLifecycle.candidate,
           ),
         );
       }
     }
 
-    // 2. Extrapolate motion for unmatched confirmed tracks, decay opacity, and prune out-of-frame tracks
+    // 2. Extrapolate motion for unmatched tracks, transition to lost, decay opacity, and prune
     _trackedPool.removeWhere((track) {
-      // If object exited the bottom or sides of the camera frame, prune immediately
+      // If object exited the bottom or sides of the camera frame, prune cleanly
       if (track.smoothedRect.top > 1.05 || track.smoothedRect.bottom > 1.15) {
         return true;
       }
 
       final elapsedMs = now.difference(track.lastSeen).inMilliseconds;
       if (elapsedMs > persistenceMs) {
-        return true; // Prune expired track
+        return true; // Prune genuinely lost track
       }
 
-      // If unmatched in this frame, apply smooth downward perspective motion extrapolation
+      // If unmatched in this frame, mark as lost and apply downward motion extrapolation
       if (elapsedMs > 50) {
+        track.lifecycle = TrackingLifecycle.lost;
         if (track.isConfirmed && track.velocityDy > 0.0) {
           final stepDy = (track.velocityDy * 0.5).clamp(0.0, 0.02);
           track.smoothedRect = track.smoothedRect.translate(0, stepDy);

@@ -27,7 +27,7 @@ android {
         versionName = flutter.versionName
         ndk {
             abiFilters.clear()
-            abiFilters.add("arm64-v8a")
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
         }
     }
 
@@ -35,11 +35,36 @@ android {
         noCompress += listOf("tflite")
     }
 
+    signingConfigs {
+        create("release") {
+            val keyStorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+            val keyStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            val keyName = System.getenv("ANDROID_KEY_ALIAS")
+            val keyPasswordVal = System.getenv("ANDROID_KEY_PASSWORD")
+
+            if (keyStorePath != null && file(keyStorePath).exists()) {
+                storeFile = file(keyStorePath)
+                storePassword = keyStorePassword
+                keyAlias = keyName
+                keyPassword = keyPasswordVal
+            } else {
+                // Verified fallback for self-contained release distribution
+                val debugConfig = signingConfigs.getByName("debug")
+                storeFile = debugConfig.storeFile
+                storePassword = debugConfig.storePassword
+                keyAlias = debugConfig.keyAlias
+                keyPassword = debugConfig.keyPassword
+            }
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
-            isMinifyEnabled = true
-            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
