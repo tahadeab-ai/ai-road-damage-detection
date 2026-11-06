@@ -185,8 +185,9 @@ class OnnxInferenceEngine {
             .map((row) => (row as List).map((v) => (v as num).toDouble()).toList())
             .toList();
 
-        return _decodeYoloOutput(
+        return decodeYoloOutput(
           outputMatrix,
+          labels: _labels,
           confThreshold: confThreshold,
           iouThreshold: iouThreshold,
           roadRoiTop: roadRoiTop,
@@ -204,8 +205,10 @@ class OnnxInferenceEngine {
   }
 
   /// Decodes raw YOLO11 tensor matrix [8, 8400] into bounding boxes and applies NMS.
-  List<DetectionResult> _decodeYoloOutput(
+  /// Handles both Ultralytics raw pixel coordinates [0, 640] and normalized [0, 1] bounds.
+  static List<DetectionResult> decodeYoloOutput(
     List<List<double>> outputMatrix, {
+    List<String> labels = authoritativeLabels,
     required double confThreshold,
     required double iouThreshold,
     required double roadRoiTop,
@@ -216,11 +219,16 @@ class OnnxInferenceEngine {
     final int numPredictions = outputMatrix[0].length; // 8400
 
     for (int i = 0; i < numPredictions; i++) {
-      // Box coordinates [cx, cy, w, h] in normalized [0, 1] space
-      final double cx = outputMatrix[0][i];
-      final double cy = outputMatrix[1][i];
-      final double w = outputMatrix[2][i];
-      final double h = outputMatrix[3][i];
+      double rawCx = outputMatrix[0][i];
+      double rawCy = outputMatrix[1][i];
+      double rawW = outputMatrix[2][i];
+      double rawH = outputMatrix[3][i];
+
+      // Convert from pixel space [0, 640] to normalized [0, 1] if needed
+      final double cx = (rawCx > 1.0 || rawCy > 1.0 || rawW > 1.0 || rawH > 1.0) ? (rawCx / 640.0) : rawCx;
+      final double cy = (rawCx > 1.0 || rawCy > 1.0 || rawW > 1.0 || rawH > 1.0) ? (rawCy / 640.0) : rawCy;
+      final double w = (rawCx > 1.0 || rawCy > 1.0 || rawW > 1.0 || rawH > 1.0) ? (rawW / 640.0) : rawW;
+      final double h = (rawCx > 1.0 || rawCy > 1.0 || rawW > 1.0 || rawH > 1.0) ? (rawH / 640.0) : rawH;
 
       // Road ROI Filter: Suppress detections whose center is above the road horizon (top 35% is sky/ceiling)
       if (cy < roadRoiTop) {
@@ -245,7 +253,7 @@ class OnnxInferenceEngine {
         final double right = (cx + (w / 2.0)).clamp(0.0, 1.0);
         final double bottom = (cy + (h / 2.0)).clamp(0.0, 1.0);
 
-        final className = bestClassId < _labels.length ? _labels[bestClassId] : 'Hazard #$bestClassId';
+        final className = bestClassId < labels.length ? labels[bestClassId] : 'Hazard #$bestClassId';
 
         candidates.add(
           DetectionResult(
