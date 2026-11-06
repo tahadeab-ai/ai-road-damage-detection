@@ -158,10 +158,17 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
 
       _cameraController = controller;
 
-      // Start live camera stream
+      // Start live camera stream with orientation telemetry
+      final sensorOrientation = backCamera.sensorOrientation;
       await _cameraController!.startImageStream((CameraImage image) {
         if (mounted) {
-          context.read<DetectionBloc>().add(ProcessCameraFrame(image));
+          final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+          final deviceAngle = isPortrait ? 0 : 90;
+          context.read<DetectionBloc>().add(ProcessCameraFrame(
+            image,
+            sensorOrientation: sensorOrientation,
+            deviceOrientationAngle: deviceAngle,
+          ));
         }
       });
 

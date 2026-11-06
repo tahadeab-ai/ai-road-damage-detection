@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 
@@ -44,12 +43,12 @@ class CameraFramePayload {
 
 /// High-performance orientation-aware preprocessing utilities for Edge AI inference.
 /// Respects Android camera sensor orientation and device orientation, applies
-/// correct affine rotation, and offloads YUV420 decoding to background Dart Isolates.
+/// vectorized lookup table rotation, and offloads YUV420 decoding to background Dart Isolates.
 class ImageProcessor {
   static const int inputWidth = 640;
   static const int inputHeight = 640;
   static const int channels = 3;
-  static const double normScale = 1.0 / 255.0; // Cached normalization constant
+  static const double normScale = 1.0 / 255.0; // Pre-calculated normalization constant
 
   /// Computes the exact rotation angle using the official Android camera sensor formula:
   /// angle = (360 - sensorOrientation + deviceOrientationAngle) % 360
@@ -86,6 +85,7 @@ class ImageProcessor {
   }
 
   /// Top-level or static function executable inside a separate Dart Isolate via [compute].
+  /// Utilizes precomputed 1D coordinate lookup tables to eliminate 400k+ inner loop divisions.
   static Float32List decodeAndNormalizeFrame(CameraFramePayload payload) {
     final Float32List float32Buffer = Float32List(inputWidth * inputHeight * channels);
     final int srcWidth = payload.width;
@@ -97,24 +97,79 @@ class ImageProcessor {
       payload.deviceOrientationAngle,
     );
 
+    // Precompute 1D coordinate mapping arrays to ensure sub-20ms execution
+    final Int32List lutCols = Int32List(inputWidth);
+    final Int32List lutRows = Int32List(inputHeight);
+
+    final int maxSrcX = srcWidth - 1;
+    final int maxSrcY = srcHeight - 1;
+
+    switch (angle) {
+      case 90:
+        // outX maps to srcY inverted, outY maps to srcX
+        for (int i = 0; i < inputWidth; i++) {
+          lutCols[i] = ((inputWidth - 1 - i) * maxSrcY) ~/ (inputWidth - 1);
+        }
+        for (int i = 0; i < inputHeight; i++) {
+          lutRows[i] = (i * maxSrcX) ~/ (inputHeight - 1);
+        }
+        break;
+      case 180:
+        // outX maps to srcX inverted, outY maps to srcY inverted
+        for (int i = 0; i < inputWidth; i++) {
+          lutCols[i] = ((inputWidth - 1 - i) * maxSrcX) ~/ (inputWidth - 1);
+        }
+        for (int i = 0; i < inputHeight; i++) {
+          lutRows[i] = ((inputHeight - 1 - i) * maxSrcY) ~/ (inputHeight - 1);
+        }
+        break;
+      case 270:
+        // outX maps to srcY, outY maps to srcX inverted
+        for (int i = 0; i < inputWidth; i++) {
+          lutCols[i] = (i * maxSrcY) ~/ (inputWidth - 1);
+        }
+        for (int i = 0; i < inputHeight; i++) {
+          lutRows[i] = ((inputHeight - 1 - i) * maxSrcX) ~/ (inputHeight - 1);
+        }
+        break;
+      case 0:
+      default:
+        // Standard unrotated mapping
+        for (int i = 0; i < inputWidth; i++) {
+          lutCols[i] = (i * maxSrcX) ~/ (inputWidth - 1);
+        }
+        for (int i = 0; i < inputHeight; i++) {
+          lutRows[i] = (i * maxSrcY) ~/ (inputHeight - 1);
+        }
+        break;
+    }
+
     // 1. Process iOS BGRA8888
     if (payload.formatGroup == ImageFormatGroup.bgra8888) {
       final Uint8List bytes = payload.planeBytes[0];
       final int bytesPerRow = payload.bytesPerRow[0];
 
+      int destIndex = 0;
       for (int y = 0; y < inputHeight; y++) {
+        final int baseSrc = lutRows[y];
         for (int x = 0; x < inputWidth; x++) {
-          final (srcX, srcY) = _mapCoordinates(x, y, srcWidth, srcHeight, angle);
-          final int pixelIndex = srcY * bytesPerRow + (srcX * 4);
+          int srcX, srcY;
+          if (angle == 90 || angle == 270) {
+            srcX = baseSrc;
+            srcY = lutCols[x];
+          } else {
+            srcX = lutCols[x];
+            srcY = baseSrc;
+          }
 
+          final int pixelIndex = srcY * bytesPerRow + (srcX * 4);
           final int b = bytes[pixelIndex];
           final int g = bytes[pixelIndex + 1];
           final int r = bytes[pixelIndex + 2];
 
-          final int destIndex = (y * inputWidth + x) * channels;
-          float32Buffer[destIndex] = r * normScale;
-          float32Buffer[destIndex + 1] = g * normScale;
-          float32Buffer[destIndex + 2] = b * normScale;
+          float32Buffer[destIndex++] = r * normScale;
+          float32Buffer[destIndex++] = g * normScale;
+          float32Buffer[destIndex++] = b * normScale;
         }
       }
     } else {
@@ -127,9 +182,19 @@ class ImageProcessor {
       final int uvRowStride = payload.bytesPerRow[1];
       final int uvPixelStride = payload.bytesPerPixel[1] ?? 1;
 
+      int destIndex = 0;
       for (int y = 0; y < inputHeight; y++) {
+        final int baseSrc = lutRows[y];
         for (int x = 0; x < inputWidth; x++) {
-          final (srcX, srcY) = _mapCoordinates(x, y, srcWidth, srcHeight, angle);
+          int srcX, srcY;
+          if (angle == 90 || angle == 270) {
+            srcX = baseSrc;
+            srcY = lutCols[x];
+          } else {
+            srcX = lutCols[x];
+            srcY = baseSrc;
+          }
+
           final int uvX = srcX >> 1;
           final int uvY = srcY >> 1;
 
@@ -140,7 +205,7 @@ class ImageProcessor {
           final int uVal = uvIndex < uBytes.length ? uBytes[uvIndex] : 128;
           final int vVal = uvIndex < vBytes.length ? vBytes[uvIndex] : 128;
 
-          // Standard YUV to RGB color-space integer matrix conversion
+          // Optimized integer YUV to RGB color conversion
           final int c = yVal - 16;
           final int d = uVal - 128;
           final int e = vVal - 128;
@@ -149,52 +214,13 @@ class ImageProcessor {
           final int g = ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255);
           final int b = ((298 * c + 516 * d + 128) >> 8).clamp(0, 255);
 
-          final int destIndex = (y * inputWidth + x) * channels;
-          float32Buffer[destIndex] = r * normScale;
-          float32Buffer[destIndex + 1] = g * normScale;
-          float32Buffer[destIndex + 2] = b * normScale;
+          float32Buffer[destIndex++] = r * normScale;
+          float32Buffer[destIndex++] = g * normScale;
+          float32Buffer[destIndex++] = b * normScale;
         }
       }
     }
 
     return float32Buffer;
-  }
-
-  /// Maps target normalized output coordinates (x, y) to source sensor coordinates based on rotation angle.
-  static (int, int) _mapCoordinates(
-    int outX,
-    int outY,
-    int srcWidth,
-    int srcHeight,
-    int angle,
-  ) {
-    int srcX;
-    int srcY;
-
-    switch (angle) {
-      case 90:
-        // Rotate 90 degrees clockwise
-        srcX = (outY * (srcWidth - 1)) ~/ (inputHeight - 1);
-        srcY = ((inputWidth - 1 - outX) * (srcHeight - 1)) ~/ (inputWidth - 1);
-        break;
-      case 180:
-        // Rotate 180 degrees
-        srcX = ((inputWidth - 1 - outX) * (srcWidth - 1)) ~/ (inputWidth - 1);
-        srcY = ((inputHeight - 1 - outY) * (srcHeight - 1)) ~/ (inputHeight - 1);
-        break;
-      case 270:
-        // Rotate 270 degrees clockwise (90 degrees counter-clockwise)
-        srcX = ((inputHeight - 1 - outY) * (srcWidth - 1)) ~/ (inputHeight - 1);
-        srcY = (outX * (srcHeight - 1)) ~/ (inputWidth - 1);
-        break;
-      case 0:
-      default:
-        // Unrotated orientation
-        srcX = (outX * (srcWidth - 1)) ~/ (inputWidth - 1);
-        srcY = (outY * (srcHeight - 1)) ~/ (inputHeight - 1);
-        break;
-    }
-
-    return (srcX.clamp(0, srcWidth - 1), srcY.clamp(0, srcHeight - 1));
   }
 }

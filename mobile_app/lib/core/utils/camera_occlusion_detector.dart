@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'dart:typed_data';
 
 /// Result object describing camera occlusion diagnostics.

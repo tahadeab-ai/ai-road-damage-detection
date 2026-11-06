@@ -1,7 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:road_guard_mobile/core/utils/camera_occlusion_detector.dart';
 import 'package:road_guard_mobile/core/utils/road_surface_gate.dart';
 
 void main() {

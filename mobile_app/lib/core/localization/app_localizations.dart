@@ -33,10 +33,12 @@ class AppStrings {
   // Language Toggle Button Label
   static String get languageToggleLabel => isArabic ? 'EN' : 'عربي';
 
-  // Scene Intelligence Status (V1.1 UI/UX)
+  // Scene Intelligence Status (V1.2 UI/UX)
   static String get sceneChecking => isArabic ? 'فحص المشهد...' : 'Checking scene...';
   static String get sceneRoadDetected => isArabic ? 'تم رصد الطريق' : 'Road detected';
   static String get sceneRoadNotDetected => isArabic ? 'لم يتم رصد طريق' : 'Road not detected';
+  static String get sceneNonRoadSurface => isArabic ? 'سطح غير طرقي (أرضية / جدار)' : 'Non-Road Surface';
+  static String get sceneCameraObstructed => isArabic ? 'الكاميرا محجوبة' : 'Camera Obstructed';
   static String get sceneDetectingDamage => isArabic ? 'مسح أضرار الطريق...' : 'Detecting road damage';
   static String get sceneHazardDetected => isArabic ? 'تم رصد ضرر طريق' : 'Hazard detected';
   static String get sceneTrackingHazard => isArabic ? 'تتبع الضرر مستمر' : 'Tracking hazard';

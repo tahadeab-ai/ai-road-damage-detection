@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'core/constants/app_theme.dart';
+import 'features/detection/data/datasources/onnx_inference_engine.dart';
 import 'features/detection/data/datasources/tflite_engine.dart';
 import 'features/detection/presentation/bloc/detection_bloc.dart';
 import 'features/detection/presentation/bloc/detection_event.dart';
@@ -26,12 +27,14 @@ void main() async {
     ),
   );
 
+  final onnxEngine = OnnxInferenceEngine();
   final tfliteEngine = TfliteEngine();
   final gpsService = GpsService();
   final hazardRepository = HazardRepository();
 
   runApp(
     RoadGuardMobileApp(
+      onnxEngine: onnxEngine,
       tfliteEngine: tfliteEngine,
       gpsService: gpsService,
       hazardRepository: hazardRepository,
@@ -40,12 +43,14 @@ void main() async {
 }
 
 class RoadGuardMobileApp extends StatelessWidget {
+  final OnnxInferenceEngine onnxEngine;
   final TfliteEngine tfliteEngine;
   final GpsService gpsService;
   final HazardRepository hazardRepository;
 
   const RoadGuardMobileApp({
     super.key,
+    required this.onnxEngine,
     required this.tfliteEngine,
     required this.gpsService,
     required this.hazardRepository,
@@ -57,6 +62,7 @@ class RoadGuardMobileApp extends StatelessWidget {
       providers: [
         BlocProvider<DetectionBloc>(
           create: (_) => DetectionBloc(
+            onnxEngine: onnxEngine,
             tfliteEngine: tfliteEngine,
             gpsService: gpsService,
             hazardRepository: hazardRepository,

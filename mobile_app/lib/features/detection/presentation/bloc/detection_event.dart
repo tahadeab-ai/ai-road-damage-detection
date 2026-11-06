@@ -13,11 +13,17 @@ class InitializeDetectionSystem extends DetectionEvent {}
 
 class ProcessCameraFrame extends DetectionEvent {
   final CameraImage image;
+  final int sensorOrientation;
+  final int deviceOrientationAngle;
 
-  const ProcessCameraFrame(this.image);
+  const ProcessCameraFrame(
+    this.image, {
+    this.sensorOrientation = 90,
+    this.deviceOrientationAngle = 0,
+  });
 
   @override
-  List<Object?> get props => [image];
+  List<Object?> get props => [image, sensorOrientation, deviceOrientationAngle];
 }
 
 class UpdateTelemetryData extends DetectionEvent {
