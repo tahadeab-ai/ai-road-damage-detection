@@ -19,6 +19,7 @@ class TrackedDetection {
   double confidence;
   Rect smoothedRect; // [left, top, right, bottom] normalized
   int streak; // Consecutive frames detected
+  int lostFramesCount; // Number of consecutive frames missed (grace period counter)
   DateTime lastSeen;
   double opacity;
   double velocityDy; // Downward motion velocity per frame in normalized space
@@ -32,6 +33,7 @@ class TrackedDetection {
     required this.confidence,
     required this.smoothedRect,
     this.streak = 1,
+    this.lostFramesCount = 0,
     DateTime? lastSeen,
     this.opacity = 1.0,
     this.velocityDy = 0.0,
@@ -78,18 +80,35 @@ class TemporalFilter {
   final double emaAlpha; // Weight for new frame coordinates (0.0 to 1.0)
   final int persistenceMs; // Box lifetime decay when temporarily dropped
   final int confirmationStreak; // Frames required to confirm detection
+  final int maxGraceFrames; // Maximum consecutive dropped frames before track removal
 
   int _nextTrackingId = 1;
   final List<TrackedDetection> _trackedPool = [];
 
   TemporalFilter({
     this.iouThreshold = 0.35,
-    this.emaAlpha = 0.60,
-    this.persistenceMs = 450,
+    this.emaAlpha = 0.65,
+    this.persistenceMs = 3500,
     this.confirmationStreak = 3,
+    this.maxGraceFrames = 10,
   });
 
   List<TrackedDetection> get activeTracked => List.unmodifiable(_trackedPool);
+
+  /// Marks a confirmed tracked detection as officially logged.
+  /// Returns `true` if this is the first time the defect is logged, `false` if already logged.
+  bool markIncidentLogged(int trackingId) {
+    for (final track in _trackedPool) {
+      if (track.trackingId == trackingId) {
+        if (!track.hasBeenLogged) {
+          track.hasBeenLogged = true;
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
+  }
 
   /// Updates tracked detections with raw detections from the latest frame.
   List<TrackedDetection> processFrame(
@@ -133,6 +152,7 @@ class TemporalFilter {
         track.confidence = raw.confidence;
         track.lastSeen = now;
         track.streak += 1;
+        track.lostFramesCount = 0; // Reset consecutive missed frame counter
         track.opacity = 1.0;
 
         // Update tracking lifecycle state
@@ -165,35 +185,45 @@ class TemporalFilter {
             confidence: raw.confidence,
             smoothedRect: raw.normalizedRect,
             streak: 1,
+            lostFramesCount: 0,
             lastSeen: now,
             opacity: 1.0,
             lifecycle: TrackingLifecycle.candidate,
           ),
         );
+        matchedIndices.add(_trackedPool.length - 1);
       }
     }
 
     // 2. Extrapolate motion for unmatched tracks, transition to lost, decay opacity, and prune
-    _trackedPool.removeWhere((track) {
-      // If object exited the bottom or sides of the camera frame, prune cleanly
-      if (track.smoothedRect.top > 1.05 || track.smoothedRect.bottom > 1.15) {
-        return true;
-      }
-
-      final elapsedMs = now.difference(track.lastSeen).inMilliseconds;
-      if (elapsedMs > persistenceMs) {
-        return true; // Prune genuinely lost track
-      }
-
-      // If unmatched in this frame, mark as lost and apply downward motion extrapolation
-      if (elapsedMs > 50) {
+    for (int i = 0; i < _trackedPool.length; i++) {
+      if (!matchedIndices.contains(i)) {
+        final track = _trackedPool[i];
+        track.lostFramesCount += 1;
         track.lifecycle = TrackingLifecycle.lost;
+
         if (track.isConfirmed && track.velocityDy > 0.0) {
           final stepDy = (track.velocityDy * 0.5).clamp(0.0, 0.02);
           track.smoothedRect = track.smoothedRect.translate(0, stepDy);
         }
-        final remainingRatio = 1.0 - (elapsedMs / persistenceMs);
-        track.opacity = max(0.0, remainingRatio);
+
+        // Graceful opacity decay over the 10-frame grace buffer
+        final remainingGrace = 1.0 - (track.lostFramesCount / maxGraceFrames);
+        track.opacity = max(0.20, remainingGrace);
+      }
+    }
+
+    // 3. Prune tracks that exceeded 10 grace frames, persistence duration, or exited camera frame
+    _trackedPool.removeWhere((track) {
+      if (track.smoothedRect.top > 1.05 || track.smoothedRect.bottom > 1.15) {
+        return true;
+      }
+      if (track.lostFramesCount > maxGraceFrames) {
+        return true; // Exceeded 10-frame grace buffer
+      }
+      final elapsedMs = now.difference(track.lastSeen).inMilliseconds;
+      if (elapsedMs > persistenceMs) {
+        return true; // Exceeded temporal timeout
       }
       return false;
     });

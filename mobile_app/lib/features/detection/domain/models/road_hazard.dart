@@ -75,6 +75,38 @@ class RoadHazard extends Equatable {
     );
   }
 
+  /// Converts this record to a Map for SQLite persistence.
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'defect_class': defectClass,
+      'class_id': classId,
+      'confidence': confidence,
+      'latitude': latitude,
+      'longitude': longitude,
+      'speed_kmh': speedKmh,
+      'timestamp': timestamp.toIso8601String(),
+      'address': address,
+      'snapshot_path': snapshotPath,
+    };
+  }
+
+  /// Deserializes a record from a SQLite database row.
+  factory RoadHazard.fromMap(Map<String, dynamic> map) {
+    return RoadHazard(
+      id: map['id'] as String,
+      defectClass: map['defect_class'] as String,
+      classId: (map['class_id'] as num).toInt(),
+      confidence: (map['confidence'] as num).toDouble(),
+      latitude: (map['latitude'] as num).toDouble(),
+      longitude: (map['longitude'] as num).toDouble(),
+      speedKmh: (map['speed_kmh'] as num).toDouble(),
+      timestamp: DateTime.parse(map['timestamp'] as String),
+      address: (map['address'] as String?) ?? '',
+      snapshotPath: map['snapshot_path'] as String?,
+    );
+  }
+
   /// Converts this record to standard GeoJSON Feature format.
   Map<String, dynamic> toGeoJsonFeature() {
     return {

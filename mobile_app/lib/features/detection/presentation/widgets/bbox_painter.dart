@@ -245,7 +245,24 @@ class BBoxOverlayPainter extends CustomPainter {
   }
 
   Rect _mapRect(Rect normRect, Size size) {
-    if (cameraAspectRatio == null || cameraAspectRatio! <= 0) {
+    return mapNormalizedRect(
+      normRect,
+      size,
+      cameraAspectRatio: cameraAspectRatio,
+      fit: BoxFit.cover,
+    );
+  }
+
+  /// High-precision camera geometry and letterbox un-mapping algorithm.
+  /// Translates normalized [0, 1] detection coordinates into exact on-screen pixels,
+  /// compensating for camera vs viewport aspect ratio mismatches across both portrait and landscape orientations.
+  static Rect mapNormalizedRect(
+    Rect normRect,
+    Size size, {
+    double? cameraAspectRatio,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    if (cameraAspectRatio == null || cameraAspectRatio <= 0 || size.width <= 0 || size.height <= 0) {
       return Rect.fromLTRB(
         normRect.left * size.width,
         normRect.top * size.height,
@@ -254,18 +271,38 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    final screenAspect = size.width / size.height;
+    final double screenAspect = size.width / size.height;
     double renderW = size.width;
     double renderH = size.height;
     double offsetX = 0.0;
     double offsetY = 0.0;
 
-    if (screenAspect > cameraAspectRatio!) {
-      renderH = size.width / cameraAspectRatio!;
-      offsetY = (renderH - size.height) / 2.0;
-    } else {
-      renderW = size.height * cameraAspectRatio!;
-      offsetX = (renderW - size.width) / 2.0;
+    if (fit == BoxFit.cover) {
+      if (screenAspect > cameraAspectRatio) {
+        // Viewport is wider than camera stream -> width fits exactly, height is cropped at top/bottom
+        renderH = size.width / cameraAspectRatio;
+        offsetY = (renderH - size.height) / 2.0;
+      } else {
+        // Viewport is taller than camera stream -> height fits, width cropped at sides
+        renderW = size.height * cameraAspectRatio;
+        offsetX = (renderW - size.width) / 2.0;
+      }
+    } else if (fit == BoxFit.contain) {
+      if (screenAspect > cameraAspectRatio) {
+        // Viewport wider -> pillarbox (bars on left/right)
+        renderW = size.height * cameraAspectRatio;
+        offsetX = (size.width - renderW) / 2.0;
+      } else {
+        // Viewport taller -> letterbox (bars on top/bottom)
+        renderH = size.width / cameraAspectRatio;
+        offsetY = (size.height - renderH) / 2.0;
+      }
+      return Rect.fromLTRB(
+        offsetX + normRect.left * renderW,
+        offsetY + normRect.top * renderH,
+        offsetX + normRect.right * renderW,
+        offsetY + normRect.bottom * renderH,
+      );
     }
 
     return Rect.fromLTRB(

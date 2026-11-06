@@ -152,7 +152,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final sw1 = Stopwatch()..start();
       // 2. Camera Occlusion Guard (Catches finger, palm, lens cover, pitch black via 32x32 variance grid)
       final occlusion = CameraOcclusionDetector.checkOcclusion(float32Buffer);
-      final tOcc = sw1.elapsedMilliseconds;
+      final double tOccMs = sw1.elapsedMicroseconds / 1000.0;
 
       if (occlusion.isOccluded) {
         stopwatch.stop();
@@ -160,6 +160,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
         _lastFrameTime = now;
         final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
+
+        debugPrint('[Occlusion] Camera Obstructed: ${occlusion.reason} (computed in ${tOccMs.toStringAsFixed(2)}ms)');
 
         emit(state.copyWith(
           isRoadDetected: false,
@@ -176,7 +178,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final sw2 = Stopwatch()..start();
       // 3. Deterministic Road Surface Gatekeeper (Multi-color-space HSL, YCbCr, texture analysis)
       final roadEval = _roadSurfaceGate.evaluateSurface(float32Buffer, occlusion: occlusion);
-      final tGate = sw2.elapsedMilliseconds;
+      final double tGateMs = sw2.elapsedMicroseconds / 1000.0;
 
       if (!roadEval.status.isTraversableRoad) {
         stopwatch.stop();
@@ -184,6 +186,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
         _lastFrameTime = now;
         final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
+
+        debugPrint('[RoadGate] Non-Road Surface Rejected: ${roadEval.rejectionReason} (computed in ${tGateMs.toStringAsFixed(2)}ms)');
 
         emit(state.copyWith(
           isRoadDetected: false,
@@ -212,7 +216,13 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       stopwatch.stop();
 
       final latencyMs = stopwatch.elapsedMilliseconds;
-      debugPrint('[Profiling] Total: ${latencyMs}ms (Pre: ${tPre}ms, Occ: ${tOcc}ms, Gate: ${tGate}ms, ONNX: ${tOnnx}ms)');
+      debugPrint('[Profiling] Total: ${latencyMs}ms (Pre: ${tPre}ms, Occ: ${tOccMs.toStringAsFixed(2)}ms, Gate: ${tGateMs.toStringAsFixed(2)}ms, ONNX: ${tOnnx}ms)');
+
+      if (rawDetections.isNotEmpty) {
+        for (final d in rawDetections) {
+          debugPrint('[RealDetection] Class: ${d.classId} (${d.className}), Conf: ${(d.confidence * 100).toStringAsFixed(1)}%, Box: [${d.normalizedRect.left.toStringAsFixed(3)}, ${d.normalizedRect.top.toStringAsFixed(3)}, ${d.normalizedRect.right.toStringAsFixed(3)}, ${d.normalizedRect.bottom.toStringAsFixed(3)}]');
+        }
+      }
 
       // 5. Compute frame rate
       final now = DateTime.now();
