@@ -258,12 +258,7 @@ class TfliteEngine {
       final inputBytes = meta.isInputFloat32
           ? Float32List(meta.inputSize * meta.inputSize * 3).buffer.asUint8List()
           : Int8List(meta.inputSize * meta.inputSize * 3).buffer.asUint8List();
-      final tensorData = interp.getInputTensor(0).data;
-      if (inputBytes.lengthInBytes == tensorData.lengthInBytes) {
-        tensorData.buffer.asUint8List().setAll(0, inputBytes);
-      } else {
-        debugPrint('[DELEGATE_BENCHMARK] Tensor size mismatch: expected ${tensorData.lengthInBytes}, got ${inputBytes.lengthInBytes}');
-      }
+      interp.getInputTensor(0).setTo(inputBytes);
       final sw = Stopwatch()..start();
       interp.invoke();
       sw.stop();
@@ -449,7 +444,7 @@ class TfliteEngine {
 
     // 2. Feed input tensor and invoke model
     final swInfer = Stopwatch()..start();
-    _interpreter!.getInputTensor(0).data.buffer.asUint8List().setAll(0, inputBytes);
+    _interpreter!.getInputTensor(0).setTo(inputBytes);
     _interpreter!.invoke();
     swInfer.stop();
 
