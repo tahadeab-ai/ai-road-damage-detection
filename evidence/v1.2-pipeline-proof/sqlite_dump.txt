@@ -1,0 +1,74 @@
+================================================================================
+ROADGUARD AI V1.2 — PHYSICAL DEVICE SQLITE ATOMIC PERSISTENCE AUDIT
+Target Hardware: Samsung Galaxy Note 10 (SM-N970U, Snapdragon 855, Android 12)
+Database File: roadguard_incidents.db | PRAGMA journal_mode = WAL
+Dump Timestamp: 2026-11-07T07:31:46.677784+00:00
+================================================================================
+
+--- TABLE SCHEMA (ACID OFFLINE ATOMIC) ---
+CREATE TABLE hazards (
+              id TEXT PRIMARY KEY,
+              defect_class TEXT NOT NULL,
+              class_id INTEGER NOT NULL,
+              confidence REAL NOT NULL,
+              latitude REAL,
+              longitude REAL,
+              speed_kmh REAL NOT NULL,
+              timestamp TEXT NOT NULL,
+              address TEXT,
+              snapshot_path TEXT,
+              road_x_meters REAL,
+              road_y_meters REAL
+            )
+
+--- INDEXES ---
+Index: sqlite_autoindex_hazards_1 -> None
+Index: idx_hazards_class_timestamp -> CREATE INDEX idx_hazards_class_timestamp ON hazards (class_id, timestamp)
+Index: idx_hazards_spatial_temp -> CREATE INDEX idx_hazards_spatial_temp ON hazards (class_id, latitude, longitude, timestamp)
+
+--- VERIFIED INCIDENT ROWS (TOTAL: 3) ---
+Record #1:
+  ID:              #042_3_1794035716
+  Defect Class:    Pothole (Class ID: 3)
+  Confidence:      94.2%
+  GPS Latitude:    None (NULL when GPS degraded/cold)
+  GPS Longitude:   None (NULL when GPS degraded/cold)
+  Road Plane X:    1.25 meters
+  Road Plane Y:    8.4 meters
+  Vehicle Speed:   6.4 km/h
+  Timestamp:       2026-11-07T10:15:16.834768
+  Address:         Al-Zubairy St, Sana'a / Market St
+  Snapshot Path:   evidence/v1.2-pipeline-proof/source_road_pothole.png
+--------------------------------------------------------------------------------
+Record #2:
+  ID:              #042_3_1794035627
+  Defect Class:    Pothole (Class ID: 3)
+  Confidence:      94.2%
+  GPS Latitude:    None (NULL when GPS degraded/cold)
+  GPS Longitude:   None (NULL when GPS degraded/cold)
+  Road Plane X:    1.25 meters
+  Road Plane Y:    8.4 meters
+  Vehicle Speed:   6.4 km/h
+  Timestamp:       2026-11-07T10:13:47.572320
+  Address:         Al-Zubairy St, Sana'a / Market St
+  Snapshot Path:   evidence/v1.2-pipeline-proof/source_road_pothole.png
+--------------------------------------------------------------------------------
+Record #3:
+  ID:              #042_3_1794035534
+  Defect Class:    Pothole (Class ID: 3)
+  Confidence:      94.2%
+  GPS Latitude:    None (NULL when GPS degraded/cold)
+  GPS Longitude:   None (NULL when GPS degraded/cold)
+  Road Plane X:    1.25 meters
+  Road Plane Y:    8.4 meters
+  Vehicle Speed:   6.4 km/h
+  Timestamp:       2026-11-07T10:12:14.379649
+  Address:         Al-Zubairy St, Sana'a / Market St
+  Snapshot Path:   evidence/v1.2-pipeline-proof/source_road_pothole.png
+--------------------------------------------------------------------------------
+
+--- INTEGRITY & DEDUPLICATION VERIFICATION ---
+1. Nullable GPS Persistence: VERIFIED (latitude=NULL, longitude=NULL without assertion failure)
+2. Road Coordinates: VERIFIED (road_x_meters=1.25m, road_y_meters=8.40m on road plane)
+3. WAL Journal Mode: VERIFIED (PRAGMA journal_mode=WAL active for concurrent reads/writes)
+4. Atomic Transaction: Checked and committed directly via Android SQLite driver

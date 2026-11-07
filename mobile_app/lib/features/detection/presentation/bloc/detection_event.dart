@@ -56,3 +56,11 @@ class ChangeConfidenceThreshold extends DetectionEvent {
 class ToggleMuteAudio extends DetectionEvent {}
 
 class ToggleTorchMode extends DetectionEvent {}
+
+class RunDiagnosticVerificationPass extends DetectionEvent {
+  final int stage; // 1: real road pothole detection, 2: camera occlusion, 3: non-road carpet rejection
+  const RunDiagnosticVerificationPass({this.stage = 1});
+
+  @override
+  List<Object?> get props => [stage];
+}

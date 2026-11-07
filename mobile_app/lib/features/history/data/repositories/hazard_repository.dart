@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import '../../../detection/domain/models/road_hazard.dart';
 
@@ -69,6 +70,8 @@ class HazardRepository {
 
     // Startup file integrity check: scan for orphaned DB rows with missing snapshot files
     await _verifySnapshotIntegrity();
+
+    await syncDatabaseToExternalStorage();
 
     _isInitialized = true;
   }
@@ -234,6 +237,8 @@ class HazardRepository {
 
       if (inserted) {
         _memoryCache.insert(0, hazard);
+        debugPrint('[SQL_DUMP] Logged incident: id=${hazard.id}, class=${hazard.defectClass}, lat=${hazard.latitude}, lon=${hazard.longitude}, roadX=${hazard.roadXMeters}, roadY=${hazard.roadYMeters}');
+        await syncDatabaseToExternalStorage();
         return true;
       }
 
@@ -271,6 +276,24 @@ class HazardRepository {
       await txn.delete(tableName);
     });
     _memoryCache.clear();
+  }
+
+  /// Exports/syncs SQLite database file to app external storage directory for easy adb retrieval.
+  Future<void> syncDatabaseToExternalStorage() async {
+    try {
+      final extDir = await getExternalStorageDirectory();
+      if (extDir != null && _database != null) {
+        final databasesPath = await getDatabasesPath();
+        final dbFile = File(p.join(databasesPath, databaseName));
+        if (dbFile.existsSync()) {
+          final targetPath = p.join(extDir.path, databaseName);
+          await dbFile.copy(targetPath);
+          debugPrint('[SQL_DUMP] Copied SQLite database to external storage: $targetPath');
+        }
+      }
+    } catch (e) {
+      debugPrint('[HazardRepository] External storage sync notice: $e');
+    }
   }
 
   /// Closes database connection.

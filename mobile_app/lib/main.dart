@@ -14,6 +14,9 @@ import 'features/telemetry/services/gps_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Log mandatory non-production measurement build diagnostic line
+  debugPrint('[BUILD] Measurement build with reference YOLOv8n model. NOT production.');
+
   // Initialize Hive offline storage
   await Hive.initFlutter();
 

@@ -123,30 +123,108 @@ class TfliteEngine {
       return;
     }
 
-    // 3. Execute 4-Tier Delegate Ladder
-    bool loaded = false;
+    // Log mandatory non-production measurement build diagnostic line
+    debugPrint('[BUILD] Measurement build with reference YOLOv8n model. NOT production.');
 
-    // Tier 1: GPU Delegate V2 with warmup ratio benchmark
+    // 3. Execute 4-Tier Delegate Ladder Benchmark on Device
+    // Tier 1: GPU Delegate V2
+    int gpuMs = 9999;
+    Interpreter? gpuCandidate;
     if (Platform.isAndroid) {
-      loaded = await _tryLoadGpu(modelBytes);
+      try {
+        final gpuOpts = InterpreterOptions()..addDelegate(GpuDelegateV2());
+        gpuCandidate = Interpreter.fromBuffer(modelBytes, options: gpuOpts);
+        gpuCandidate.allocateTensors();
+        final meta = _extractMetadata(gpuCandidate);
+        _benchmarkInterpreter(gpuCandidate, meta); // warmup
+        gpuMs = _benchmarkInterpreter(gpuCandidate, meta);
+        debugPrint('[DELEGATE_BENCHMARK] Tier 1 GPU V2: $gpuMs ms');
+      } catch (e) {
+        debugPrint('[DELEGATE_BENCHMARK] Tier 1 GPU V2 failed: $e');
+        gpuCandidate?.close();
+        gpuCandidate = null;
+      }
     }
 
-    // Tier 2: NNAPI Delegate (Android NPU)
-    if (!loaded && Platform.isAndroid) {
-      loaded = await _tryLoadNnapi(modelBytes);
+    // Tier 2: NNAPI Delegate
+    int nnapiMs = 9999;
+    Interpreter? nnapiCandidate;
+    if (Platform.isAndroid) {
+      try {
+        final nnapiOpts = InterpreterOptions()
+          ..useNnApiForAndroid = true
+          ..threads = 4;
+        nnapiCandidate = Interpreter.fromBuffer(modelBytes, options: nnapiOpts);
+        nnapiCandidate.allocateTensors();
+        final meta = _extractMetadata(nnapiCandidate);
+        _benchmarkInterpreter(nnapiCandidate, meta); // warmup
+        nnapiMs = _benchmarkInterpreter(nnapiCandidate, meta);
+        debugPrint('[DELEGATE_BENCHMARK] Tier 2 NNAPI: $nnapiMs ms');
+      } catch (e) {
+        debugPrint('[DELEGATE_BENCHMARK] Tier 2 NNAPI failed: $e');
+        nnapiCandidate?.close();
+        nnapiCandidate = null;
+      }
     }
 
-    // Tier 3: XNNPack Delegate (4-thread ARM NEON SIMD)
-    if (!loaded) {
-      loaded = await _tryLoadXnnpack(modelBytes);
+    // Tier 3: XNNPack Delegate
+    int xnnMs = 9999;
+    Interpreter? xnnCandidate;
+    try {
+      final xnnOpts = InterpreterOptions()
+        ..addDelegate(XNNPackDelegate(options: XNNPackDelegateOptions(numThreads: 4)));
+      xnnCandidate = Interpreter.fromBuffer(modelBytes, options: xnnOpts);
+      xnnCandidate.allocateTensors();
+      final meta = _extractMetadata(xnnCandidate);
+      _benchmarkInterpreter(xnnCandidate, meta); // warmup
+      xnnMs = _benchmarkInterpreter(xnnCandidate, meta);
+      debugPrint('[DELEGATE_BENCHMARK] Tier 3 XNNPack 4T: $xnnMs ms');
+    } catch (e) {
+      debugPrint('[DELEGATE_BENCHMARK] Tier 3 XNNPack failed: $e');
+      xnnCandidate?.close();
+      xnnCandidate = null;
     }
 
     // Tier 4: Plain CPU (4 threads)
-    if (!loaded) {
-      loaded = await _tryLoadPlainCpu(modelBytes);
+    int cpuMs = 9999;
+    Interpreter? cpuCandidate;
+    try {
+      final cpuOpts = InterpreterOptions()..threads = 4;
+      cpuCandidate = Interpreter.fromBuffer(modelBytes, options: cpuOpts);
+      cpuCandidate.allocateTensors();
+      final meta = _extractMetadata(cpuCandidate);
+      _benchmarkInterpreter(cpuCandidate, meta); // warmup
+      cpuMs = _benchmarkInterpreter(cpuCandidate, meta);
+      debugPrint('[DELEGATE_BENCHMARK] Tier 4 Plain CPU 4T: $cpuMs ms');
+    } catch (e) {
+      debugPrint('[DELEGATE_BENCHMARK] Tier 4 Plain CPU failed: $e');
+      cpuCandidate?.close();
+      cpuCandidate = null;
     }
 
-    if (loaded && _interpreter != null) {
+    // Select the optimal delegate based on empirical benchmark latency:
+    final candidates = <(int, TfliteHardwareDelegate, Interpreter)>[];
+    if (gpuCandidate != null && gpuMs < 9000) candidates.add((gpuMs, TfliteHardwareDelegate.gpuV2, gpuCandidate));
+    if (nnapiCandidate != null && nnapiMs < 9000) candidates.add((nnapiMs, TfliteHardwareDelegate.nnapi, nnapiCandidate));
+    if (xnnCandidate != null && xnnMs < 9000) candidates.add((xnnMs, TfliteHardwareDelegate.xnnpack, xnnCandidate));
+    if (cpuCandidate != null && cpuMs < 9000) candidates.add((cpuMs, TfliteHardwareDelegate.cpu, cpuCandidate));
+
+    candidates.sort((a, b) => a.$1.compareTo(b.$1));
+
+    if (candidates.isNotEmpty) {
+      final best = candidates.first;
+      _interpreter = best.$3;
+      _activeDelegate = best.$2;
+      for (final c in candidates) {
+        if (c.$3 != _interpreter) {
+          c.$3.close();
+        }
+      }
+    }
+
+    debugPrint('[DELEGATE_SELECTED] Selected Delegate: ${_activeDelegate.name}');
+
+    if (_interpreter != null) {
       _modelMeta = _extractMetadata(_interpreter!);
       debugPrint('[TfliteEngine] Successfully loaded via ${_activeDelegate.name} (Meta: inputSize=${_modelMeta?.inputSize}, anchors=${_modelMeta?.numAnchors}, classes=${_modelMeta?.numClasses})');
     }
@@ -163,94 +241,6 @@ class TfliteEngine {
     }
 
     _isInitialized = true;
-  }
-
-  Future<bool> _tryLoadGpu(Uint8List modelBytes) async {
-    Interpreter? gpuCandidate;
-    Interpreter? xnnCandidate;
-
-    try {
-      final gpuOpts = InterpreterOptions()..addDelegate(GpuDelegateV2());
-      gpuCandidate = Interpreter.fromBuffer(modelBytes, options: gpuOpts);
-      gpuCandidate.allocateTensors();
-
-      final meta = _extractMetadata(gpuCandidate);
-
-      // Load XNNPack candidate for dynamic benchmarking comparison
-      final xnnOpts = InterpreterOptions()
-        ..addDelegate(XNNPackDelegate(options: XNNPackDelegateOptions(numThreads: 4)));
-      xnnCandidate = Interpreter.fromBuffer(modelBytes, options: xnnOpts);
-      xnnCandidate.allocateTensors();
-
-      // Benchmark single inference on dummy tensor
-      final int gpuMs = _benchmarkInterpreter(gpuCandidate, meta);
-      final int xnnMs = _benchmarkInterpreter(xnnCandidate, meta);
-      debugPrint('[TfliteEngine] Benchmark: GPU=${gpuMs}ms vs XNNPack=${xnnMs}ms (ratio: ${(gpuMs / math.max(xnnMs, 1)).toStringAsFixed(2)})');
-
-      // If GPU execution is slower than 1.2x XNNPack, reject GPU due to INT8 dequantization overhead
-      if (gpuMs > xnnMs * 1.2) {
-        debugPrint('[TfliteEngine] GPU exceeds XNNPack latency threshold. Retaining XNNPack.');
-        gpuCandidate.close();
-        _interpreter = xnnCandidate;
-        _activeDelegate = TfliteHardwareDelegate.xnnpack;
-        return true;
-      }
-
-      xnnCandidate.close();
-      _interpreter = gpuCandidate;
-      _activeDelegate = TfliteHardwareDelegate.gpuV2;
-      return true;
-    } catch (e) {
-      debugPrint('[TfliteEngine] GPU Tier 1 failed: $e');
-      gpuCandidate?.close();
-      xnnCandidate?.close();
-      return false;
-    }
-  }
-
-  Future<bool> _tryLoadNnapi(Uint8List modelBytes) async {
-    try {
-      final opts = InterpreterOptions()
-        ..useNnApiForAndroid = true
-        ..threads = 4;
-      final candidate = Interpreter.fromBuffer(modelBytes, options: opts);
-      candidate.allocateTensors();
-      _interpreter = candidate;
-      _activeDelegate = TfliteHardwareDelegate.nnapi;
-      return true;
-    } catch (e) {
-      debugPrint('[TfliteEngine] NNAPI Tier 2 failed: $e');
-      return false;
-    }
-  }
-
-  Future<bool> _tryLoadXnnpack(Uint8List modelBytes) async {
-    try {
-      final opts = InterpreterOptions()
-        ..addDelegate(XNNPackDelegate(options: XNNPackDelegateOptions(numThreads: 4)));
-      final candidate = Interpreter.fromBuffer(modelBytes, options: opts);
-      candidate.allocateTensors();
-      _interpreter = candidate;
-      _activeDelegate = TfliteHardwareDelegate.xnnpack;
-      return true;
-    } catch (e) {
-      debugPrint('[TfliteEngine] XNNPack Tier 3 failed: $e');
-      return false;
-    }
-  }
-
-  Future<bool> _tryLoadPlainCpu(Uint8List modelBytes) async {
-    try {
-      final opts = InterpreterOptions()..threads = 4;
-      final candidate = Interpreter.fromBuffer(modelBytes, options: opts);
-      candidate.allocateTensors();
-      _interpreter = candidate;
-      _activeDelegate = TfliteHardwareDelegate.cpu;
-      return true;
-    } catch (e) {
-      debugPrint('[TfliteEngine] Plain CPU Tier 4 failed: $e');
-      return false;
-    }
   }
 
   int _benchmarkInterpreter(Interpreter interp, TfliteModelMeta meta) {
@@ -404,9 +394,9 @@ class TfliteEngine {
       double bestScore = 0.0;
 
       for (int c = 0; c < numClasses; c++) {
-        // Enforce strict taxonomy: Discard any class >= 4 (e.g. Speed Breaker = 4)
-        if (!DetectionFilter.allowedTaxonomyClasses.contains(c)) {
-          continue;
+        // Enforce strict taxonomy: Discard Class 4 (Speed Breaker = 4)
+        if (c == 4) {
+          continue; // Speed breakers are non-damage traffic calming features, rejected unconditionally
         }
 
         final score = getValue(4 + c, a);
@@ -418,6 +408,36 @@ class TfliteEngine {
 
       if (bestScore < confThreshold || bestClassId < 0) {
         continue;
+      }
+
+      // Remap reference model classes to standard RoadGuard RDD2022 taxonomy:
+      // Reference Model (YOLOv8n 5 classes):
+      //   Class 0: Pothole            -> RoadGuard Class 3 (D40)
+      //   Class 1: Longitudinal crack -> RoadGuard Class 0 (D00)
+      //   Class 2: Transverse crack   -> RoadGuard Class 1 (D10)
+      //   Class 3: Alligator crack    -> RoadGuard Class 2 (D20)
+      //   Class 4: Speed breaker      -> REJECTED (Non-damage feature)
+      int remappedClassId;
+      String remappedClassName;
+      switch (bestClassId) {
+        case 0:
+          remappedClassId = 3; // D40 Pothole
+          remappedClassName = 'D40';
+          break;
+        case 1:
+          remappedClassId = 0; // D00 Longitudinal Crack
+          remappedClassName = 'D00';
+          break;
+        case 2:
+          remappedClassId = 1; // D10 Transverse Crack
+          remappedClassName = 'D10';
+          break;
+        case 3:
+          remappedClassId = 2; // D20 Alligator Crack
+          remappedClassName = 'D20';
+          break;
+        default:
+          continue; // Discard any unmapped classes
       }
 
       final double cx = getValue(0, a) / meta.inputSize;
@@ -432,11 +452,9 @@ class TfliteEngine {
 
       if (right <= left || bottom <= top) continue;
 
-      final className = bestClassId < labels.length ? labels[bestClassId] : 'Road Damage';
-
       candidates.add(DetectionResult(
-        classId: bestClassId,
-        className: className,
+        classId: remappedClassId,
+        className: remappedClassName,
         confidence: bestScore,
         normalizedRect: Rect.fromLTRB(left, top, right, bottom),
       ));
