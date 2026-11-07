@@ -42,6 +42,9 @@ env/
 bundle.b64
 bundle.tar.gz
 scratch_*
+reference/
+release_notes.md
+uv.lock
 *.b64
 
 # Datasets & Large Archives (MANDATORY: Never commit raw data)
@@ -63,6 +66,7 @@ RDD2022/
 *.engine
 *.tflite
 *.apk
+!releases/*.apk
 *.aab
 *.torchscript
 runs/
