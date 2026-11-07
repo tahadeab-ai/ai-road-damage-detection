@@ -1,5 +1,4 @@
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:road_guard_mobile/features/hazard_detection/hazard_tracker.dart';
 import 'package:road_guard_mobile/features/hazard_detection/surface_filter.dart';
 import 'package:road_guard_mobile/shared/models/hazard_event.dart';

@@ -15,6 +15,7 @@ class BBoxOverlayPainter extends CustomPainter {
   final double? cameraAspectRatio;
   final double roadRoiTop;
   final bool isRoadDetected;
+  final bool showDebugInfo;
 
   BBoxOverlayPainter({
     required this.trackedDetections,
@@ -23,6 +24,7 @@ class BBoxOverlayPainter extends CustomPainter {
     this.cameraAspectRatio,
     this.roadRoiTop = 0.35,
     this.isRoadDetected = true,
+    this.showDebugInfo = false,
   });
 
   @override
@@ -219,15 +221,36 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    // 5. Draw Localized Badge Tag with Track ID & Explicit Percentage (e.g. "#001 حفرة 84%")
-    final String badgeText = AppStrings.getDefectBadge(track.classId, track.confidence);
-    final String labelText = '${track.formattedTrackId} $badgeText';
+    // 5. Draw Localized Automotive Badge Tag with Track ID, Defect Name & Explicit Percentage
+    // e.g. "#042 حفرة 94%" (Arabic RTL) or "#042 Pothole 94%" (English LTR)
+    final String defectName = AppStrings.getDefectName(track.classId);
+    final int pct = (track.confidence * 100).round();
+    final String labelText = '${track.formattedTrackId} $defectName $pct%';
     _drawBadge(
       canvas,
       labelText,
       rect.topLeft,
       defectColor.withValues(alpha: alphaFactor),
+      screenSize: size,
     );
+
+    // 6. Optional Diagnostics Overlay: State, time since last seen, and road metric coordinates
+    if (showDebugInfo) {
+      final String stateName = track.lifecycle.name.toUpperCase();
+      final String roadStr = track.roadCoordsMeters != null
+          ? '(${track.roadCoordsMeters!.dx.toStringAsFixed(1)}, ${track.roadCoordsMeters!.dy.toStringAsFixed(1)})m'
+          : 'N/A';
+      final int lastSeenMs = DateTime.now().difference(track.lastSeen).inMilliseconds;
+      final String debugText = '$stateName | ${lastSeenMs}ms | $roadStr';
+      _drawBadge(
+        canvas,
+        debugText,
+        rect.bottomLeft + const Offset(0, 4),
+        Colors.cyanAccent.withValues(alpha: 0.85),
+        fontSize: 8.5,
+        screenSize: size,
+      );
+    }
   }
 
   void _paintFallbackBox(Canvas canvas, Size size, DetectionResult det) {
@@ -241,11 +264,34 @@ class BBoxOverlayPainter extends CustomPainter {
     canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(8)), borderPaint);
 
     final String labelText = AppStrings.getDefectBadge(det.classId, det.confidence);
-    _drawBadge(canvas, labelText, rect.topLeft, defectColor);
+    _drawBadge(
+      canvas,
+      labelText,
+      rect.topLeft,
+      defectColor,
+      screenSize: size,
+    );
   }
 
   Rect _mapRect(Rect normRect, Size size) {
-    if (cameraAspectRatio == null || cameraAspectRatio! <= 0) {
+    return mapNormalizedRect(
+      normRect,
+      size,
+      cameraAspectRatio: cameraAspectRatio,
+      fit: BoxFit.cover,
+    );
+  }
+
+  /// High-precision camera geometry and letterbox un-mapping algorithm.
+  /// Translates normalized [0, 1] detection coordinates into exact on-screen pixels,
+  /// compensating for camera vs viewport aspect ratio mismatches across both portrait and landscape orientations.
+  static Rect mapNormalizedRect(
+    Rect normRect,
+    Size size, {
+    double? cameraAspectRatio,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    if (cameraAspectRatio == null || cameraAspectRatio <= 0 || size.width <= 0 || size.height <= 0) {
       return Rect.fromLTRB(
         normRect.left * size.width,
         normRect.top * size.height,
@@ -254,18 +300,38 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    final screenAspect = size.width / size.height;
+    final double screenAspect = size.width / size.height;
     double renderW = size.width;
     double renderH = size.height;
     double offsetX = 0.0;
     double offsetY = 0.0;
 
-    if (screenAspect > cameraAspectRatio!) {
-      renderH = size.width / cameraAspectRatio!;
-      offsetY = (renderH - size.height) / 2.0;
-    } else {
-      renderW = size.height * cameraAspectRatio!;
-      offsetX = (renderW - size.width) / 2.0;
+    if (fit == BoxFit.cover) {
+      if (screenAspect > cameraAspectRatio) {
+        // Viewport is wider than camera stream -> width fits exactly, height is cropped at top/bottom
+        renderH = size.width / cameraAspectRatio;
+        offsetY = (renderH - size.height) / 2.0;
+      } else {
+        // Viewport is taller than camera stream -> height fits, width cropped at sides
+        renderW = size.height * cameraAspectRatio;
+        offsetX = (renderW - size.width) / 2.0;
+      }
+    } else if (fit == BoxFit.contain) {
+      if (screenAspect > cameraAspectRatio) {
+        // Viewport wider -> pillarbox (bars on left/right)
+        renderW = size.height * cameraAspectRatio;
+        offsetX = (size.width - renderW) / 2.0;
+      } else {
+        // Viewport taller -> letterbox (bars on top/bottom)
+        renderH = size.width / cameraAspectRatio;
+        offsetY = (size.height - renderH) / 2.0;
+      }
+      return Rect.fromLTRB(
+        offsetX + normRect.left * renderW,
+        offsetY + normRect.top * renderH,
+        offsetX + normRect.right * renderW,
+        offsetY + normRect.bottom * renderH,
+      );
     }
 
     return Rect.fromLTRB(
@@ -290,10 +356,17 @@ class BBoxOverlayPainter extends CustomPainter {
     }
   }
 
-  void _drawBadge(Canvas canvas, String text, Offset position, Color color) {
-    const textStyle = TextStyle(
+  void _drawBadge(
+    Canvas canvas,
+    String text,
+    Offset position,
+    Color color, {
+    double fontSize = 11.0,
+    Size? screenSize,
+  }) {
+    final textStyle = TextStyle(
       color: Colors.black,
-      fontSize: 11,
+      fontSize: fontSize,
       fontWeight: FontWeight.w900,
       letterSpacing: 0.3,
     );
@@ -306,9 +379,19 @@ class BBoxOverlayPainter extends CustomPainter {
 
     final badgeHeight = textPainter.height + 6.0;
     final badgeWidth = textPainter.width + 12.0;
+
+    double left = position.dx;
+    if (screenSize != null && screenSize.width > 0) {
+      left = left.clamp(4.0, max(4.0, screenSize.width - badgeWidth - 4.0));
+    }
+
+    final double top = position.dy - badgeHeight - 4.0 >= 0
+        ? position.dy - badgeHeight - 4.0
+        : position.dy + 4.0;
+
     final badgeRect = Rect.fromLTWH(
-      position.dx,
-      position.dy - badgeHeight - 4.0 >= 0 ? position.dy - badgeHeight - 4.0 : position.dy + 4.0,
+      left,
+      top,
       badgeWidth,
       badgeHeight,
     );

@@ -36,14 +36,14 @@ void main() {
       expect(manager.isMuted, isFalse);
     });
 
-    test('Unconfirmed detections (streak < 3) do not trigger alerts', () async {
+    test('Unconfirmed detections do not trigger alerts', () async {
       final unconfirmedTrack = TrackedDetection(
         trackingId: 1,
         classId: 3,
         className: 'Pothole',
         confidence: 0.85,
         smoothedRect: const Rect.fromLTWH(0.2, 0.5, 0.2, 0.2),
-        streak: 2, // Not yet confirmed
+        lifecycle: TrackingLifecycle.candidate,
       );
 
       await manager.evaluateAlerts(
@@ -59,7 +59,7 @@ void main() {
         className: 'Pothole',
         confidence: 0.85,
         smoothedRect: const Rect.fromLTWH(0.2, 0.5, 0.2, 0.2),
-        streak: 3, // Confirmed
+        lifecycle: TrackingLifecycle.confirmed,
       );
 
       final now = DateTime.now();

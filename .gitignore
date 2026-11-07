@@ -79,3 +79,14 @@ checkpoints/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Kotlin & Android cache
+.kotlin/
+*.db
+evidence/current_device_screen.png
+evidence/live_roadguard_screen.png
+
+# Reference repositories for analysis (DO NOT COMMIT)
+reference/
+uv.lock
+

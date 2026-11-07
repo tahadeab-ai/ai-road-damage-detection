@@ -106,22 +106,22 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     }
   }
 
-  /// Disposes existing camera controller safely.
+  /// Disposes existing camera controller safely without widget build race conditions.
   Future<void> _stopAndDisposeCamera() async {
     try {
-      if (_cameraController != null) {
-        if (_cameraController!.value.isStreamingImages) {
-          await _cameraController!.stopImageStream();
-        }
-        await _cameraController!.dispose();
-        _cameraController = null;
-      }
-    } catch (e) {
-      debugPrint('[DrivingDetectorScreen] Camera disposal notice: $e');
-    } finally {
+      final oldController = _cameraController;
+      _cameraController = null;
       if (mounted) {
         setState(() => _isCameraReady = false);
       }
+      if (oldController != null) {
+        if (oldController.value.isStreamingImages) {
+          await oldController.stopImageStream();
+        }
+        await oldController.dispose();
+      }
+    } catch (e) {
+      debugPrint('[DrivingDetectorScreen] Camera disposal notice: $e');
     }
   }
 
@@ -158,10 +158,17 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
 
       _cameraController = controller;
 
-      // Start live camera stream
+      // Start live camera stream with orientation telemetry
+      final sensorOrientation = backCamera.sensorOrientation;
       await _cameraController!.startImageStream((CameraImage image) {
         if (mounted) {
-          context.read<DetectionBloc>().add(ProcessCameraFrame(image));
+          final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+          final deviceAngle = isPortrait ? 0 : 90;
+          context.read<DetectionBloc>().add(ProcessCameraFrame(
+            image,
+            sensorOrientation: sensorOrientation,
+            deviceOrientationAngle: deviceAngle,
+          ));
         }
       });
 

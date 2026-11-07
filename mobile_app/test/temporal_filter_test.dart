@@ -11,8 +11,9 @@ void main() {
       filter = TemporalFilter(
         iouThreshold: 0.35,
         emaAlpha: 0.50,
-        persistenceMs: 350,
-        confirmationStreak: 3,
+        confirmationWindowMs: 150,
+        lostGraceThresholdMs: 800,
+        removalGraceThresholdMs: 3000,
       );
     });
 
@@ -30,15 +31,15 @@ void main() {
       expect(tracks.length, equals(1));
       expect(tracks.first.trackingId, equals(1));
       expect(tracks.first.classId, equals(3));
-      expect(tracks.first.streak, equals(1));
+      expect(tracks.first.associationCount, equals(1));
       expect(tracks.first.isConfirmed, isFalse);
       expect(tracks.first.opacity, equals(1.0));
     });
 
-    test('Consecutive frame detections confirm hazard after 3 frames', () {
-      final now = DateTime.now();
+    test('Temporal detections confirm hazard across confirmation window (>= 150ms)', () {
+      final now = DateTime(2026, 11, 7, 12, 0, 0);
 
-      // Frame 1
+      // Observation 1: t = 0ms
       filter.processFrame([
         const DetectionResult(
           classId: 3,
@@ -50,7 +51,7 @@ void main() {
 
       expect(filter.activeTracked.first.isConfirmed, isFalse);
 
-      // Frame 2
+      // Observation 2: t = 100ms (< 150ms confirmation window)
       filter.processFrame([
         const DetectionResult(
           classId: 3,
@@ -58,75 +59,68 @@ void main() {
           confidence: 0.82,
           normalizedRect: Rect.fromLTWH(0.21, 0.41, 0.3, 0.2),
         ),
-      ], timestamp: now.add(const Duration(milliseconds: 33)));
+      ], timestamp: now.add(const Duration(milliseconds: 100)));
 
-      expect(filter.activeTracked.first.streak, equals(2));
+      expect(filter.activeTracked.first.associationCount, equals(2));
       expect(filter.activeTracked.first.isConfirmed, isFalse);
 
-      // Frame 3 (Confirmation Gate)
+      // Observation 3: t = 200ms (>= 150ms confirmation window reached)
+      filter.processFrame([
+        const DetectionResult(
+          classId: 3,
+          className: 'Pothole',
+          confidence: 0.86,
+          normalizedRect: Rect.fromLTWH(0.22, 0.42, 0.3, 0.2),
+        ),
+      ], timestamp: now.add(const Duration(milliseconds: 200)));
+
+      expect(filter.activeTracked.first.associationCount, equals(3));
+      expect(filter.activeTracked.first.isConfirmed, isTrue);
+      expect(filter.activeTracked.first.isCritical, isTrue); // D40 is critical
+    });
+
+    test('EMA smoothing smoothly interpolates bounding box coordinates', () {
+      final now = DateTime(2026, 11, 7, 12, 0, 0);
+
+      filter.processFrame([
+        const DetectionResult(
+          classId: 3,
+          className: 'Pothole',
+          confidence: 0.80,
+          normalizedRect: Rect.fromLTRB(0.20, 0.40, 0.40, 0.60),
+        ),
+      ], timestamp: now);
+
+      // Second observation shifted right to (0.30, 0.40, 0.50, 0.60)
       filter.processFrame([
         const DetectionResult(
           classId: 3,
           className: 'Pothole',
           confidence: 0.85,
-          normalizedRect: Rect.fromLTWH(0.20, 0.40, 0.3, 0.2),
+          normalizedRect: Rect.fromLTRB(0.30, 0.40, 0.50, 0.60),
         ),
-      ], timestamp: now.add(const Duration(milliseconds: 66)));
+      ], timestamp: now.add(const Duration(milliseconds: 100)));
 
-      expect(filter.activeTracked.first.streak, equals(3));
-      expect(filter.activeTracked.first.isConfirmed, isTrue);
-      expect(filter.activeTracked.first.isCritical, isTrue);
+      // With emaAlpha = 0.50, new left = 0.20*0.5 + 0.30*0.5 = 0.25
+      final smoothed = filter.activeTracked.first.smoothedRect;
+      expect(smoothed.left, closeTo(0.25, 0.01));
+      expect(smoothed.right, closeTo(0.45, 0.01));
     });
 
-    test('EMA smoothing blends coordinates between consecutive frames', () {
-      final now = DateTime.now();
+    test('markIncidentLogged returns true on first call and false on duplicates', () {
+      final now = DateTime(2026, 11, 7, 12, 0, 0);
 
-      // Frame 1: left = 0.20
       filter.processFrame([
         const DetectionResult(
-          classId: 1,
-          className: 'Transverse Crack',
-          confidence: 0.75,
-          normalizedRect: Rect.fromLTWH(0.20, 0.50, 0.40, 0.10),
+          classId: 3,
+          className: 'Pothole',
+          confidence: 0.85,
+          normalizedRect: Rect.fromLTWH(0.2, 0.4, 0.3, 0.2),
         ),
       ], timestamp: now);
 
-      // Frame 2: left = 0.30, with emaAlpha = 0.50 -> expected left = 0.20 * 0.5 + 0.30 * 0.5 = 0.25
-      filter.processFrame([
-        const DetectionResult(
-          classId: 1,
-          className: 'Transverse Crack',
-          confidence: 0.78,
-          normalizedRect: Rect.fromLTWH(0.30, 0.50, 0.40, 0.10),
-        ),
-      ], timestamp: now.add(const Duration(milliseconds: 33)));
-
-      final track = filter.activeTracked.first;
-      expect(track.smoothedRect.left, closeTo(0.25, 0.001));
-    });
-
-    test('Persistence buffer preserves tracks with decaying opacity on dropped frame', () {
-      final now = DateTime.now();
-
-      // Frame 1
-      filter.processFrame([
-        const DetectionResult(
-          classId: 2,
-          className: 'Alligator Crack',
-          confidence: 0.70,
-          normalizedRect: Rect.fromLTWH(0.3, 0.5, 0.2, 0.2),
-        ),
-      ], timestamp: now);
-
-      // Frame 2: Dropped frame (empty detections) at +150ms
-      final tracks = filter.processFrame([], timestamp: now.add(const Duration(milliseconds: 150)));
-      expect(tracks.length, equals(1));
-      expect(tracks.first.opacity, lessThan(1.0));
-      expect(tracks.first.opacity, greaterThan(0.0));
-
-      // Frame 3: Expired after persistenceMs (e.g. +400ms)
-      final expiredTracks = filter.processFrame([], timestamp: now.add(const Duration(milliseconds: 400)));
-      expect(expiredTracks, isEmpty);
+      expect(filter.markIncidentLogged(1), isTrue);
+      expect(filter.markIncidentLogged(1), isFalse);
     });
   });
 }

@@ -1,0 +1,21 @@
+{
+  "dataset": "RDD2022 (Road Damage Dataset 2022)",
+  "split": "validation_calibration",
+  "num_samples": 50,
+  "resolution": [640, 640],
+  "color_space": "RGB",
+  "samples": [
+    {"sample_id": "Japan_000124", "primary_class": "D00", "description": "Longitudinal cracking on asphalt highway"},
+    {"sample_id": "Japan_000155", "primary_class": "D10", "description": "Transverse cracking across lane width"},
+    {"sample_id": "Japan_000212", "primary_class": "D20", "description": "Alligator fatigue cracking cluster"},
+    {"sample_id": "Japan_000341", "primary_class": "D40", "description": "Deep localized circular pothole"},
+    {"sample_id": "India_001042", "primary_class": "D40", "description": "Monsoon surface cavitation pothole"},
+    {"sample_id": "India_001289", "primary_class": "D00", "description": "Longitudinal wheelpath rutting crack"},
+    {"sample_id": "India_001402", "primary_class": "D20", "description": "Interconnected crocodile alligator pattern"},
+    {"sample_id": "Czech_000084", "primary_class": "D10", "description": "Thermal expansion transverse joint defect"},
+    {"sample_id": "Czech_000192", "primary_class": "D40", "description": "Freeze-thaw spall pothole"},
+    {"sample_id": "United_States_000512", "primary_class": "D00", "description": "Longitudinal center-line asphalt seam crack"},
+    {"sample_id": "United_States_000841", "primary_class": "D20", "description": "Severe alligator surface fatigue"},
+    {"sample_id": "United_States_001024", "primary_class": "D40", "description": "Edge-break road edge pothole"}
+  ]
+}

@@ -36,10 +36,20 @@ class CameraHudOverlay extends StatelessWidget {
                 // 1. Top Automotive Telemetry HUD Header (Overflow-Proof via FittedBox)
                 _buildTopHudBar(context),
 
+                // Non-production diagnostic tag required for measurement build
+                _buildMeasurementTag(context),
+
                 // 2. Scene Intelligence Status Chip (V1.1 UI/UX)
                 _buildSceneStatusChip(context),
 
-                // 3. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
+                // 3. Inspection Mode & Operational Regime Banner (≤ 8 km/h)
+                _buildInspectionModeBanner(context),
+
+                // 4. GPS Degraded Warning Banner
+                if (!state.gpsData.isGpsLocked || (state.gpsData.latitude == 0.0 && state.gpsData.longitude == 0.0))
+                  _buildGpsWarningBanner(context),
+
+                // 5. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
                 // Suppressed if off-road to eliminate false alarms
                 if (state.criticalHazardAlert != null && state.isRoadDetected)
                   _buildCriticalWarningBanner(context),
@@ -269,6 +279,35 @@ class CameraHudOverlay extends StatelessWidget {
     );
   }
 
+  Widget _buildMeasurementTag(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF59E0B).withValues(alpha: 0.90), // High-visibility Amber
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.black, width: 1.2),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Text(
+        'DEBUG BUILD — BLIND MODE INSTRUMENTATION',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.8,
+        ),
+      ),
+    );
+  }
+
   Widget _buildSceneStatusChip(BuildContext context) {
     final bool isRoad = state.isRoadDetected;
     final bool isTracking = state.trackedDetections.any((t) => t.isConfirmed);
@@ -278,8 +317,12 @@ class CameraHudOverlay extends StatelessWidget {
     IconData statusIcon;
     Color statusColor;
 
-    if (!isRoad) {
-      statusText = AppStrings.sceneRoadNotDetected;
+    if (state.sceneStateIndex == 6) {
+      statusText = AppStrings.sceneCameraObstructed;
+      statusIcon = Icons.block_rounded;
+      statusColor = AppColors.d40Pothole;
+    } else if (!isRoad) {
+      statusText = AppStrings.sceneNonRoadSurface;
       statusIcon = Icons.visibility_off_rounded;
       statusColor = AppColors.warning;
     } else if (isTracking) {
@@ -343,6 +386,75 @@ class CameraHudOverlay extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInspectionModeBanner(BuildContext context) {
+    final speed = state.gpsData.speedKmh;
+    final bool isSpeedExceeded = speed > 8.0;
+
+    final color = isSpeedExceeded ? AppColors.warning : AppColors.successGps;
+    final text = isSpeedExceeded
+        ? 'SPEED EXCEEDED (>8 KM/H) - DETECTION MUTED'
+        : 'INSPECTION MODE (≤ 8 KM/H)';
+    final icon = isSpeedExceeded ? Icons.speed_rounded : Icons.verified_user_rounded;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color, width: 1.0),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 13),
+            const SizedBox(width: 5),
+            Text(
+              text,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGpsWarningBanner(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.warning, width: 1.0),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.gps_off_rounded, color: AppColors.warning, size: 13),
+            SizedBox(width: 5),
+            Text(
+              '⚠️ GPS DEGRADED - VISUAL ONLY',
+              style: TextStyle(
+                color: AppColors.warning,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -13,11 +13,17 @@ class InitializeDetectionSystem extends DetectionEvent {}
 
 class ProcessCameraFrame extends DetectionEvent {
   final CameraImage image;
+  final int sensorOrientation;
+  final int deviceOrientationAngle;
 
-  const ProcessCameraFrame(this.image);
+  const ProcessCameraFrame(
+    this.image, {
+    this.sensorOrientation = 90,
+    this.deviceOrientationAngle = 0,
+  });
 
   @override
-  List<Object?> get props => [image];
+  List<Object?> get props => [image, sensorOrientation, deviceOrientationAngle];
 }
 
 class UpdateTelemetryData extends DetectionEvent {
@@ -50,3 +56,11 @@ class ChangeConfidenceThreshold extends DetectionEvent {
 class ToggleMuteAudio extends DetectionEvent {}
 
 class ToggleTorchMode extends DetectionEvent {}
+
+class RunDiagnosticVerificationPass extends DetectionEvent {
+  final int stage; // 1: real road pothole detection, 2: camera occlusion, 3: non-road carpet rejection
+  const RunDiagnosticVerificationPass({this.stage = 1});
+
+  @override
+  List<Object?> get props => [stage];
+}
