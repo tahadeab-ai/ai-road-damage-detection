@@ -1,11 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/colors.dart';
 import '../../../../core/localization/app_localizations.dart';
-import '../bloc/detection_bloc.dart';
-import '../bloc/detection_event.dart';
 import '../bloc/detection_state.dart';
 
 class CameraHudOverlay extends StatelessWidget {
@@ -282,38 +279,30 @@ class CameraHudOverlay extends StatelessWidget {
     );
   }
 
-  static int _diagStage = 0;
-
   Widget _buildMeasurementTag(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        _diagStage = (_diagStage % 3) + 1;
-        context.read<DetectionBloc>().add(RunDiagnosticVerificationPass(stage: _diagStage));
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
-        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF59E0B).withValues(alpha: 0.90), // High-visibility Amber
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.black, width: 1.2),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black38,
-              blurRadius: 4,
-              offset: Offset(0, 2),
-            ),
-          ],
-        ),
-        child: const Text(
-          'MEASUREMENT BUILD — REFERENCE MODEL',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.black,
-            fontSize: 10.5,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.8,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF59E0B).withValues(alpha: 0.90), // High-visibility Amber
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.black, width: 1.2),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 4,
+            offset: Offset(0, 2),
           ),
+        ],
+      ),
+      child: const Text(
+        'DEBUG BUILD — BLIND MODE INSTRUMENTATION',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.8,
         ),
       ),
     );

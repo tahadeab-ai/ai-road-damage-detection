@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
 import '../../../../core/utils/camera_occlusion_detector.dart';
+import '../../../../core/utils/debug_logger.dart';
 import '../../../../core/utils/detection_filter.dart';
 import '../../../../core/utils/image_processor.dart';
 import '../../../../core/utils/road_surface_gate.dart';
@@ -17,6 +18,14 @@ import '../../domain/models/detection_result.dart';
 import '../../domain/models/road_hazard.dart';
 import 'detection_event.dart';
 import 'detection_state.dart';
+
+/// Developer flag for blind-mode pipeline debugging.
+/// When true:
+/// - IGNORES the Road Gate (treats surface as verified road).
+/// - IGNORES the Occlusion Detector.
+/// - IGNORES Detection Filters (border, min area, aspect ratio, confidence floors).
+/// - Draws ANY box the model outputs, regardless of confidence.
+const bool kDebugForceDetections = true;
 
 /// Debug flag: Set to true only during development benchmarking or regression validation.
 /// In production and release builds, TFLite is the exclusive inference path.
@@ -67,6 +76,9 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     Emitter<DetectionState> emit,
   ) async {
     try {
+      // 0. Initialize persistent on-device diagnostic logger
+      DebugLogger.init();
+
       // 1. Initialize primary on-device TFLite engine via 4-tier delegate ladder
       await tfliteEngine.initialize();
 
@@ -93,20 +105,6 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         gpsData: gpsService.currentGpsData,
         isMuted: _alertManager.isMuted,
       ));
-
-      // Automated on-device hardware measurement proof sequence
-      Future.delayed(const Duration(seconds: 4), () {
-        add(const RunDiagnosticVerificationPass(stage: 1));
-      });
-      Future.delayed(const Duration(seconds: 10), () {
-        add(const RunDiagnosticVerificationPass(stage: 2));
-      });
-      Future.delayed(const Duration(seconds: 14), () {
-        add(const RunDiagnosticVerificationPass(stage: 3));
-      });
-      Future.delayed(const Duration(seconds: 18), () {
-        add(const ToggleDetectionStreaming(true));
-      });
     } catch (e) {
       debugPrint('[DetectionBloc] Initialization notice: $e');
       emit(state.copyWith(isInitialized: true, isStreaming: true));
@@ -174,6 +172,13 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
 
     _isProcessingFrame = true;
     final stopwatch = Stopwatch()..start();
+    final frameTime = DateTime.now();
+
+    // 1. [FRAME] Logging
+    DebugLogger.log(
+      '[FRAME]',
+      '${frameTime.toIso8601String()}, dim: ${event.image.width}x${event.image.height}, sensorOrient: ${event.sensorOrientation}, deviceAngle: ${event.deviceOrientationAngle}, appliedRot: ${event.sensorOrientation}',
+    );
 
     try {
       final sw0 = Stopwatch()..start();
@@ -191,50 +196,61 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final double tOccMs = sw1.elapsedMicroseconds / 1000.0;
 
       if (occlusion.isOccluded) {
-        stopwatch.stop();
-        final now = DateTime.now();
-        final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
-        _lastFrameTime = now;
-        final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
+        DebugLogger.log('[OCCLUSION]', 'Status: Obstructed, Reason: ${occlusion.reason} (${tOccMs.toStringAsFixed(2)}ms)');
+        if (!kDebugForceDetections) {
+          stopwatch.stop();
+          final now = DateTime.now();
+          final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
+          _lastFrameTime = now;
+          final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
 
-        debugPrint('[Occlusion] Camera Obstructed: ${occlusion.reason} (computed in ${tOccMs.toStringAsFixed(2)}ms)');
-
-        emit(state.copyWith(
-          isRoadDetected: false,
-          sceneStateIndex: 6, // Camera Obstructed
-          detections: [],
-          trackedDetections: [],
-          criticalHazardAlert: () => null,
-          inferenceLatencyMs: stopwatch.elapsedMilliseconds,
-          fps: double.parse(fps.toStringAsFixed(1)),
-        ));
-        return;
+          emit(state.copyWith(
+            isRoadDetected: false,
+            sceneStateIndex: 6, // Camera Obstructed
+            detections: [],
+            trackedDetections: [],
+            criticalHazardAlert: () => null,
+            inferenceLatencyMs: stopwatch.elapsedMilliseconds,
+            fps: double.parse(fps.toStringAsFixed(1)),
+          ));
+          return;
+        } else {
+          DebugLogger.log('[OCCLUSION]', '(BYPASS: proceeding due to kDebugForceDetections)');
+        }
       }
 
       final sw2 = Stopwatch()..start();
       // 3. Deterministic Road Surface Gatekeeper
       final roadEval = _roadSurfaceGate.evaluateSurface(float32Buffer, occlusion: occlusion);
       final double tGateMs = sw2.elapsedMicroseconds / 1000.0;
+      final statusStr = roadEval.status.isTraversableRoad ? 'Pass' : 'Fail';
+      final reasonStr = roadEval.status.isTraversableRoad ? '' : ', Reason: ${roadEval.rejectionReason}';
+      DebugLogger.log(
+        '[ROAD_GATE]',
+        'Status: $statusStr, avg_saturation: ${roadEval.averageSaturation.toStringAsFixed(4)}, chroma_dev: ${roadEval.chromaDeviation.toStringAsFixed(4)}, edge_score: ${roadEval.edgeDensity.toStringAsFixed(4)}$reasonStr',
+      );
 
       if (!roadEval.status.isTraversableRoad) {
-        stopwatch.stop();
-        final now = DateTime.now();
-        final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
-        _lastFrameTime = now;
-        final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
+        if (!kDebugForceDetections) {
+          stopwatch.stop();
+          final now = DateTime.now();
+          final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
+          _lastFrameTime = now;
+          final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
 
-        debugPrint('[RoadGate] Non-Road Surface Rejected: ${roadEval.rejectionReason} (computed in ${tGateMs.toStringAsFixed(2)}ms)');
-
-        emit(state.copyWith(
-          isRoadDetected: false,
-          sceneStateIndex: roadEval.status == RoadSurfaceStatus.checking ? 0 : 2,
-          detections: [],
-          trackedDetections: [],
-          criticalHazardAlert: () => null,
-          inferenceLatencyMs: stopwatch.elapsedMilliseconds,
-          fps: double.parse(fps.toStringAsFixed(1)),
-        ));
-        return;
+          emit(state.copyWith(
+            isRoadDetected: false,
+            sceneStateIndex: roadEval.status == RoadSurfaceStatus.checking ? 0 : 2,
+            detections: [],
+            trackedDetections: [],
+            criticalHazardAlert: () => null,
+            inferenceLatencyMs: stopwatch.elapsedMilliseconds,
+            fps: double.parse(fps.toStringAsFixed(1)),
+          ));
+          return;
+        } else {
+          DebugLogger.log('[ROAD_GATE]', '(BYPASS: proceeding due to kDebugForceDetections)');
+        }
       }
 
       final sw3 = Stopwatch()..start();
@@ -253,8 +269,9 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           uvRowStride: event.image.planes[1].bytesPerRow,
           uvPixelStride: event.image.planes[1].bytesPerPixel ?? 1,
           sensorOrientation: event.sensorOrientation,
-          confThreshold: state.confidenceThreshold,
+          confThreshold: kDebugForceDetections ? 0.001 : state.confidenceThreshold,
           iouThreshold: 0.35,
+          forceDetections: kDebugForceDetections,
         );
         rawDetections = tfliteDetections;
         delegateUsed = timings.delegateName;
@@ -292,13 +309,29 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           (state.gpsData.latitude == 0.0 && state.gpsData.longitude == 0.0);
       final double speedMps = state.gpsData.speedKmh / 3.6;
 
-      final trackedList = _temporalFilter.processFrame(
+      var trackedList = _temporalFilter.processFrame(
         rawDetections,
         timestamp: now,
         rgbBuffer: float32Buffer,
         speedMps: speedMps,
         isGpsDegraded: isGpsDegraded,
       );
+
+      // In force-detection mode, ensure on-screen overlay renders all detections
+      if (kDebugForceDetections && rawDetections.isNotEmpty) {
+        if (!trackedList.any((t) => t.isConfirmed)) {
+          int debugId = 1;
+          trackedList = rawDetections.map((d) => TrackedDetection(
+            trackingId: debugId++,
+            classId: d.classId,
+            className: d.className,
+            confidence: d.confidence,
+            smoothedRect: d.normalizedRect,
+            lifecycle: TrackingLifecycle.confirmed,
+            hasBeenLogged: true,
+          )).toList();
+        }
+      }
 
       // 7. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
       if (state.gpsData.speedKmh <= 8.0) {

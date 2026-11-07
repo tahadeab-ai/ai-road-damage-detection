@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
+import '../../../../core/utils/debug_logger.dart';
 import '../../../../core/utils/detection_filter.dart';
 import '../../../../core/utils/nms_utils.dart';
 import '../../../../core/utils/yuv_converter.dart';
@@ -282,6 +284,45 @@ class TfliteEngine {
     );
   }
 
+  static int _debugFrameCounter = 0;
+
+  static void _saveDebugFrame(Int8List int8Input, TfliteModelMeta meta) {
+    try {
+      final img.Image debugImg = img.Image(width: meta.inputSize, height: meta.inputSize);
+      final double scale = meta.inputScale > 0 ? meta.inputScale : 1.0 / 255.0;
+      final int zeroPoint = meta.inputZeroPoint;
+
+      final int totalPixels = meta.inputSize * meta.inputSize;
+      for (int i = 0; i < totalPixels; i++) {
+        final int y = i ~/ meta.inputSize;
+        final int x = i % meta.inputSize;
+        final int idx = i * 3;
+        final int rawR = int8Input[idx];
+        final int rawG = int8Input[idx + 1];
+        final int rawB = int8Input[idx + 2];
+
+        final int r = (((rawR - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
+        final int g = (((rawG - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
+        final int b = (((rawB - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
+        debugImg.setPixelRgb(x, y, r, g, b);
+      }
+
+      final jpgBytes = img.encodeJpg(debugImg, quality: 85);
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      const dirPath = '/sdcard/Android/data/com.roadguard.road_guard_mobile/files/debug_frames';
+      final dir = Directory(dirPath);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      final filePath = '$dirPath/frame_$ts.jpg';
+      final file = File(filePath);
+      file.writeAsBytesSync(jpgBytes);
+      DebugLogger.log('[DEBUG_FRAME]', 'Saved 640x640 model input buffer to $filePath (${jpgBytes.length} bytes)');
+    } catch (e) {
+      DebugLogger.log('[DEBUG_FRAME]', 'Failed to save debug frame: $e');
+    }
+  }
+
   /// Runs real-time inference on a raw YUV_420_888 camera frame with zero intermediate allocations.
   Future<(List<DetectionResult>, TfliteTimings)> runInferenceOnYuv({
     required Uint8List yPlane,
@@ -295,6 +336,7 @@ class TfliteEngine {
     int sensorOrientation = 90,
     double confThreshold = 0.35,
     double iouThreshold = 0.35,
+    bool forceDetections = false,
   }) async {
     if (_interpreter == null || _modelMeta == null) {
       await initialize();
@@ -323,6 +365,12 @@ class TfliteEngine {
     );
     swResize.stop();
 
+    // Save every 10th 640x640 frame fed into the model
+    _debugFrameCounter++;
+    if (_debugFrameCounter % 10 == 0) {
+      _saveDebugFrame(int8Input, meta);
+    }
+
     // 2. Feed input tensor and invoke model
     final swInfer = Stopwatch()..start();
     _interpreter!.getInputTensor(0).data.buffer.asUint8List().setAll(0, int8Input.buffer.asUint8List());
@@ -338,13 +386,19 @@ class TfliteEngine {
       meta: meta,
       confThreshold: confThreshold,
       labels: _labels,
+      forceDetections: forceDetections,
     );
     swDecode.stop();
 
     // 4. Filter candidates via explicit detection safety filters
     final swFilter = Stopwatch()..start();
-    final trackingCandidates = DetectionFilter.filterForTracking(candidates);
-    final filtered = NmsUtils.performNMS(trackingCandidates, iouThreshold: iouThreshold);
+    final List<DetectionResult> filtered;
+    if (forceDetections) {
+      filtered = NmsUtils.performNMS(candidates, iouThreshold: 0.50);
+    } else {
+      final trackingCandidates = DetectionFilter.filterForTracking(candidates);
+      filtered = NmsUtils.performNMS(trackingCandidates, iouThreshold: iouThreshold);
+    }
     swFilter.stop();
 
     final timings = TfliteTimings(
@@ -366,8 +420,8 @@ class TfliteEngine {
     required TfliteModelMeta meta,
     required double confThreshold,
     required List<String> labels,
+    bool forceDetections = false,
   }) {
-    final List<DetectionResult> candidates = [];
     final int numAnchors = meta.numAnchors;
     final int numClasses = meta.numClasses;
     final bool channelMajor = meta.channelMajor;
@@ -388,17 +442,86 @@ class TfliteEngine {
       }
     }
 
+    String getRawClassName(int c) {
+      switch (c) {
+        case 0:
+          return 'Pothole (D40)';
+        case 1:
+          return 'Longitudinal (D00)';
+        case 2:
+          return 'Transverse (D10)';
+        case 3:
+          return 'Alligator (D20)';
+        case 4:
+          return 'SpeedBreaker';
+        default:
+          return 'Class_$c';
+      }
+    }
+
+    // Step 1: Scan all anchors to extract Top 3 highest-confidence classes before ANY filtering
+    final top3 = <({int classId, String className, double conf, Rect box})>[];
+
     for (int a = 0; a < numAnchors; a++) {
-      // Find highest class confidence
+      int bestC = -1;
+      double bestS = -1.0;
+
+      for (int c = 0; c < numClasses; c++) {
+        if (c == 4) continue; // Skip Speed Breaker
+        final score = getValue(4 + c, a);
+        if (score > bestS) {
+          bestS = score;
+          bestC = c;
+        }
+      }
+
+      if (bestC >= 0) {
+        final double cx = getValue(0, a) / meta.inputSize;
+        final double cy = getValue(1, a) / meta.inputSize;
+        final double w = getValue(2, a) / meta.inputSize;
+        final double h = getValue(3, a) / meta.inputSize;
+
+        final double left = (cx - w / 2.0).clamp(0.0, 1.0);
+        final double top = (cy - h / 2.0).clamp(0.0, 1.0);
+        final double right = (cx + w / 2.0).clamp(0.0, 1.0);
+        final double bottom = (cy + h / 2.0).clamp(0.0, 1.0);
+
+        final cand = (
+          classId: bestC,
+          className: getRawClassName(bestC),
+          conf: bestS,
+          box: Rect.fromLTRB(left, top, right, bottom),
+        );
+
+        if (top3.length < 3) {
+          top3.add(cand);
+          top3.sort((x, y) => y.conf.compareTo(x.conf));
+        } else if (bestS > top3.last.conf) {
+          top3[2] = cand;
+          top3.sort((x, y) => y.conf.compareTo(x.conf));
+        }
+      }
+    }
+
+    // Format and log [RAW_TENSOR] for EVERY frame
+    String fmtTop(int idx) {
+      if (idx >= top3.length) return 'Top${idx + 1}: None';
+      final item = top3[idx];
+      return 'Top${idx + 1}: Class ${item.classId} (${item.className}) Conf: ${(item.conf * 100).toStringAsFixed(2)}%, Box: [${item.box.left.toStringAsFixed(3)}, ${item.box.top.toStringAsFixed(3)}, ${item.box.right.toStringAsFixed(3)}, ${item.box.bottom.toStringAsFixed(3)}]';
+    }
+
+    DebugLogger.log('[RAW_TENSOR]', '${fmtTop(0)} | ${fmtTop(1)} | ${fmtTop(2)}');
+
+    // Step 2: Decode raw candidates
+    final List<DetectionResult> rawCandidates = [];
+    final double effThreshold = forceDetections ? 0.001 : confThreshold;
+
+    for (int a = 0; a < numAnchors; a++) {
       int bestClassId = -1;
       double bestScore = 0.0;
 
       for (int c = 0; c < numClasses; c++) {
-        // Enforce strict taxonomy: Discard Class 4 (Speed Breaker = 4)
-        if (c == 4) {
-          continue; // Speed breakers are non-damage traffic calming features, rejected unconditionally
-        }
-
+        if (c == 4) continue; // Skip Speed Breaker
         final score = getValue(4 + c, a);
         if (score > bestScore) {
           bestScore = score;
@@ -406,17 +529,10 @@ class TfliteEngine {
         }
       }
 
-      if (bestScore < confThreshold || bestClassId < 0) {
+      if (bestScore < effThreshold || bestClassId < 0) {
         continue;
       }
 
-      // Remap reference model classes to standard RoadGuard RDD2022 taxonomy:
-      // Reference Model (YOLOv8n 5 classes):
-      //   Class 0: Pothole            -> RoadGuard Class 3 (D40)
-      //   Class 1: Longitudinal crack -> RoadGuard Class 0 (D00)
-      //   Class 2: Transverse crack   -> RoadGuard Class 1 (D10)
-      //   Class 3: Alligator crack    -> RoadGuard Class 2 (D20)
-      //   Class 4: Speed breaker      -> REJECTED (Non-damage feature)
       int remappedClassId;
       String remappedClassName;
       switch (bestClassId) {
@@ -437,7 +553,7 @@ class TfliteEngine {
           remappedClassName = 'D20';
           break;
         default:
-          continue; // Discard any unmapped classes
+          continue;
       }
 
       final double cx = getValue(0, a) / meta.inputSize;
@@ -452,7 +568,7 @@ class TfliteEngine {
 
       if (right <= left || bottom <= top) continue;
 
-      candidates.add(DetectionResult(
+      rawCandidates.add(DetectionResult(
         classId: remappedClassId,
         className: remappedClassName,
         confidence: bestScore,
@@ -460,7 +576,86 @@ class TfliteEngine {
       ));
     }
 
-    return candidates;
+    // If forceDetections is true and no candidate exceeded 0.001, seed with the top3 raw predictions
+    if (forceDetections && rawCandidates.isEmpty && top3.isNotEmpty) {
+      for (final t in top3) {
+        int remappedClassId = 3;
+        String remappedClassName = 'D40';
+        switch (t.classId) {
+          case 0:
+            remappedClassId = 3;
+            remappedClassName = 'D40';
+            break;
+          case 1:
+            remappedClassId = 0;
+            remappedClassName = 'D00';
+            break;
+          case 2:
+            remappedClassId = 1;
+            remappedClassName = 'D10';
+            break;
+          case 3:
+            remappedClassId = 2;
+            remappedClassName = 'D20';
+            break;
+        }
+        rawCandidates.add(DetectionResult(
+          classId: remappedClassId,
+          className: remappedClassName,
+          confidence: t.conf > 0 ? t.conf : 0.001,
+          normalizedRect: t.box,
+        ));
+      }
+    }
+
+    // Step 3: Log [FILTER] for EVERY candidate with exact reason
+    final List<DetectionResult> accepted = [];
+    for (final cand in rawCandidates) {
+      final eval = DetectionFilter.evaluate(
+        rect: cand.normalizedRect,
+        classId: cand.classId,
+        confidence: cand.confidence,
+      );
+
+      String reasonStr;
+      switch (eval.reason) {
+        case FilterRejectionReason.borderArtifact:
+          reasonStr = 'border';
+          break;
+        case FilterRejectionReason.minimumAreaViolation:
+          reasonStr = 'min_area';
+          break;
+        case FilterRejectionReason.aspectRatioViolation:
+          reasonStr = 'aspect_ratio';
+          break;
+        case FilterRejectionReason.belowTrackingFloor:
+        case FilterRejectionReason.belowLoggingFloor:
+          reasonStr = 'low_confidence';
+          break;
+        case FilterRejectionReason.invalidTaxonomyClass:
+          reasonStr = 'invalid_class';
+          break;
+        case FilterRejectionReason.none:
+          reasonStr = 'none';
+          break;
+      }
+
+      final bool isAcc = eval.isValidForTracking;
+      final String filterStatus = isAcc ? 'ACCEPTED' : 'REJECTED ($reasonStr)';
+      DebugLogger.log(
+        '[FILTER]',
+        'Class: ${cand.className}, Conf: ${(cand.confidence * 100).toStringAsFixed(2)}%, Box: [${cand.normalizedRect.left.toStringAsFixed(3)}, ${cand.normalizedRect.top.toStringAsFixed(3)}, ${cand.normalizedRect.right.toStringAsFixed(3)}, ${cand.normalizedRect.bottom.toStringAsFixed(3)}] -> $filterStatus',
+      );
+
+      if (forceDetections) {
+        DebugLogger.log('[FILTER]', '(OVERRIDDEN by kDebugForceDetections: forced ACCEPTED)');
+        accepted.add(cand);
+      } else if (isAcc) {
+        accepted.add(cand);
+      }
+    }
+
+    return accepted;
   }
 
   /// Gatekeeper: Binary Road Surface Classifier (Road vs Non-Road).
