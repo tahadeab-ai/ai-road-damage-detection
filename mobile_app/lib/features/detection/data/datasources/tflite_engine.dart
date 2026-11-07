@@ -45,6 +45,8 @@ class TfliteModelMeta {
   final int numAnchors;
   final int numClasses;
   final bool channelMajor;
+  final bool inputChannelMajor;
+  final bool isInputFloat32;
   final double inputScale;
   final int inputZeroPoint;
   final double outputScale;
@@ -55,6 +57,8 @@ class TfliteModelMeta {
     required this.numAnchors,
     required this.numClasses,
     required this.channelMajor,
+    required this.inputChannelMajor,
+    required this.isInputFloat32,
     required this.inputScale,
     required this.inputZeroPoint,
     required this.outputScale,
@@ -70,10 +74,10 @@ class TfliteModelMeta {
 /// - Tier 3: XNNPackDelegate (4-thread ARM NEON SIMD)
 /// - Tier 4: Plain CPU (4 threads)
 ///
-/// Employs zero-allocation YUV-to-INT8 conversion, strict RDD2022 taxonomy filtering
-/// (discards out-of-taxonomy classes like Speed Breakers), and geometric boundary filters.
+/// Employs zero-allocation YUV-to-Float32/INT8 conversion, native 4-class RDD2022
+/// taxonomy (D00, D10, D20, D40), and geometric boundary filters.
 class TfliteEngine {
-  static const String defaultModelAssetPath = 'assets/models/best_full_integer_quant.tflite';
+  static const String defaultModelAssetPath = 'assets/models/roadguard-yolo-v1.1.0-int8.tflite';
   static const String roadGateAssetPath = 'assets/models/road_gate.tflite';
   static const String labelsAssetPath = 'assets/models/labels.txt';
 
@@ -126,7 +130,7 @@ class TfliteEngine {
     }
 
     // Log mandatory non-production measurement build diagnostic line
-    debugPrint('[BUILD] Measurement build with reference YOLOv8n model. NOT production.');
+    debugPrint('[BUILD] Production build with authentic YOLO11n INT8 TFLite model.');
 
     // 3. Execute 4-Tier Delegate Ladder Benchmark on Device
     // Tier 1: GPU Delegate V2
@@ -222,6 +226,10 @@ class TfliteEngine {
           c.$3.close();
         }
       }
+    } else {
+      _interpreter = cpuCandidate ?? xnnCandidate ?? nnapiCandidate ?? gpuCandidate;
+      _activeDelegate = TfliteHardwareDelegate.cpu;
+      debugPrint('[DELEGATE_SELECTED] Fallback to available interpreter: ${_interpreter != null}');
     }
 
     debugPrint('[DELEGATE_SELECTED] Selected Delegate: ${_activeDelegate.name}');
@@ -247,25 +255,38 @@ class TfliteEngine {
 
   int _benchmarkInterpreter(Interpreter interp, TfliteModelMeta meta) {
     try {
-      final dummyInput = Int8List(meta.inputSize * meta.inputSize * 3);
-      interp.getInputTensor(0).data.buffer.asUint8List().setAll(0, dummyInput.buffer.asUint8List());
+      final inputBytes = meta.isInputFloat32
+          ? Float32List(meta.inputSize * meta.inputSize * 3).buffer.asUint8List()
+          : Int8List(meta.inputSize * meta.inputSize * 3).buffer.asUint8List();
+      final tensorData = interp.getInputTensor(0).data;
+      if (inputBytes.lengthInBytes == tensorData.lengthInBytes) {
+        tensorData.buffer.asUint8List().setAll(0, inputBytes);
+      } else {
+        debugPrint('[DELEGATE_BENCHMARK] Tensor size mismatch: expected ${tensorData.lengthInBytes}, got ${inputBytes.lengthInBytes}');
+      }
       final sw = Stopwatch()..start();
       interp.invoke();
       sw.stop();
       return sw.elapsedMilliseconds;
-    } catch (_) {
+    } catch (e, stack) {
+      debugPrint('[DELEGATE_BENCHMARK] Exception in benchmark: $e\n$stack');
       return 9999;
     }
   }
 
   TfliteModelMeta _extractMetadata(Interpreter interp) {
-    final inShape = interp.getInputTensor(0).shape;
-    final inParams = interp.getInputTensor(0).params;
-    final outShape = interp.getOutputTensor(0).shape;
-    final outParams = interp.getOutputTensor(0).params;
+    final inTensor = interp.getInputTensor(0);
+    final inShape = inTensor.shape;
+    final inParams = inTensor.params;
+    final outTensor = interp.getOutputTensor(0);
+    final outShape = outTensor.shape;
+    final outParams = outTensor.params;
 
-    final int inputSize = inShape.length >= 3 ? inShape[1] : 640;
-    final int dimA = outShape.length >= 3 ? outShape[1] : 9;
+    final bool isInputFloat32 = inTensor.type == TensorType.float32;
+    final bool inputChannelMajor = inShape.length >= 4 && inShape[1] == 3;
+    final int inputSize = inputChannelMajor ? inShape[2] : (inShape.length >= 3 ? inShape[1] : 640);
+
+    final int dimA = outShape.length >= 3 ? outShape[1] : 8;
     final int dimB = outShape.length >= 3 ? outShape[2] : 8400;
 
     final bool channelMajor = dimA < dimB;
@@ -277,6 +298,8 @@ class TfliteEngine {
       numAnchors: numAnchors,
       numClasses: numClasses,
       channelMajor: channelMajor,
+      inputChannelMajor: inputChannelMajor,
+      isInputFloat32: isInputFloat32,
       inputScale: inParams.scale > 0.0 ? inParams.scale : 0.003921568859368563,
       inputZeroPoint: inParams.zeroPoint,
       outputScale: outParams.scale > 0.0 ? outParams.scale : 1.0,
@@ -286,25 +309,47 @@ class TfliteEngine {
 
   static int _debugFrameCounter = 0;
 
-  static void _saveDebugFrame(Int8List int8Input, TfliteModelMeta meta) {
+  static void _saveDebugFrame(Uint8List rawBytes, TfliteModelMeta meta) {
     try {
       final img.Image debugImg = img.Image(width: meta.inputSize, height: meta.inputSize);
-      final double scale = meta.inputScale > 0 ? meta.inputScale : 1.0 / 255.0;
-      final int zeroPoint = meta.inputZeroPoint;
-
       final int totalPixels = meta.inputSize * meta.inputSize;
-      for (int i = 0; i < totalPixels; i++) {
-        final int y = i ~/ meta.inputSize;
-        final int x = i % meta.inputSize;
-        final int idx = i * 3;
-        final int rawR = int8Input[idx];
-        final int rawG = int8Input[idx + 1];
-        final int rawB = int8Input[idx + 2];
 
-        final int r = (((rawR - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
-        final int g = (((rawG - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
-        final int b = (((rawB - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
-        debugImg.setPixelRgb(x, y, r, g, b);
+      if (meta.isInputFloat32) {
+        final floatData = rawBytes.buffer.asFloat32List();
+        final int planeSize = totalPixels;
+        for (int i = 0; i < totalPixels; i++) {
+          final int y = i ~/ meta.inputSize;
+          final int x = i % meta.inputSize;
+          final int r, g, b;
+          if (meta.inputChannelMajor) {
+            r = (floatData[i] * 255.0).round().clamp(0, 255);
+            g = (floatData[planeSize + i] * 255.0).round().clamp(0, 255);
+            b = (floatData[planeSize * 2 + i] * 255.0).round().clamp(0, 255);
+          } else {
+            final int idx = i * 3;
+            r = (floatData[idx] * 255.0).round().clamp(0, 255);
+            g = (floatData[idx + 1] * 255.0).round().clamp(0, 255);
+            b = (floatData[idx + 2] * 255.0).round().clamp(0, 255);
+          }
+          debugImg.setPixelRgb(x, y, r, g, b);
+        }
+      } else {
+        final int8Data = rawBytes.buffer.asInt8List();
+        final double scale = meta.inputScale > 0 ? meta.inputScale : 1.0 / 255.0;
+        final int zeroPoint = meta.inputZeroPoint;
+        for (int i = 0; i < totalPixels; i++) {
+          final int y = i ~/ meta.inputSize;
+          final int x = i % meta.inputSize;
+          final int idx = i * 3;
+          final int rawR = int8Data[idx];
+          final int rawG = int8Data[idx + 1];
+          final int rawB = int8Data[idx + 2];
+
+          final int r = (((rawR - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
+          final int g = (((rawG - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
+          final int b = (((rawB - zeroPoint) * scale) * 255.0).round().clamp(0, 255);
+          debugImg.setPixelRgb(x, y, r, g, b);
+        }
       }
 
       final jpgBytes = img.encodeJpg(debugImg, quality: 85);
@@ -348,32 +393,63 @@ class TfliteEngine {
     final meta = _modelMeta!;
     final swResize = Stopwatch()..start();
 
-    // 1. Zero-allocation in-place bilinear rotation and quantization
-    final int8Input = YuvConverter.yuv420ToInt8(
-      yPlane: yPlane,
-      uPlane: uPlane,
-      vPlane: vPlane,
-      srcWidth: srcWidth,
-      srcHeight: srcHeight,
-      uvRowStride: uvRowStride,
-      uvPixelStride: uvPixelStride,
-      yRowStride: yRowStride,
-      dstSize: meta.inputSize,
-      inputScale: meta.inputScale,
-      inputZeroPoint: meta.inputZeroPoint,
-      sensorOrientation: sensorOrientation,
-    );
+    // 1. Zero-allocation in-place bilinear rotation and normalization
+    final Uint8List inputBytes;
+    if (meta.isInputFloat32) {
+      final floatList = meta.inputChannelMajor
+          ? YuvConverter.yuv420ToFloat32Chw(
+              yPlane: yPlane,
+              uPlane: uPlane,
+              vPlane: vPlane,
+              srcWidth: srcWidth,
+              srcHeight: srcHeight,
+              uvRowStride: uvRowStride,
+              uvPixelStride: uvPixelStride,
+              yRowStride: yRowStride,
+              dstSize: meta.inputSize,
+              sensorOrientation: sensorOrientation,
+            )
+          : YuvConverter.yuv420ToFloat32Hwc(
+              yPlane: yPlane,
+              uPlane: uPlane,
+              vPlane: vPlane,
+              srcWidth: srcWidth,
+              srcHeight: srcHeight,
+              uvRowStride: uvRowStride,
+              uvPixelStride: uvPixelStride,
+              yRowStride: yRowStride,
+              dstSize: meta.inputSize,
+              sensorOrientation: sensorOrientation,
+            );
+      inputBytes = floatList.buffer.asUint8List();
+    } else {
+      final int8List = YuvConverter.yuv420ToInt8(
+        yPlane: yPlane,
+        uPlane: uPlane,
+        vPlane: vPlane,
+        srcWidth: srcWidth,
+        srcHeight: srcHeight,
+        uvRowStride: uvRowStride,
+        uvPixelStride: uvPixelStride,
+        yRowStride: yRowStride,
+        dstSize: meta.inputSize,
+        inputScale: meta.inputScale,
+        inputZeroPoint: meta.inputZeroPoint,
+        sensorOrientation: sensorOrientation,
+      );
+      inputBytes = int8List.buffer.asUint8List();
+    }
     swResize.stop();
 
     // Save every 10th 640x640 frame fed into the model
     _debugFrameCounter++;
     if (_debugFrameCounter % 10 == 0) {
-      _saveDebugFrame(int8Input, meta);
+      _saveDebugFrame(inputBytes, meta);
     }
 
     // 2. Feed input tensor and invoke model
     final swInfer = Stopwatch()..start();
-    _interpreter!.getInputTensor(0).data.buffer.asUint8List().setAll(0, int8Input.buffer.asUint8List());
+    _interpreter!.getInputTensor(0).data.buffer.asUint8List().setAll(0, inputBytes);
     _interpreter!.invoke();
     swInfer.stop();
 
@@ -445,17 +521,30 @@ class TfliteEngine {
     String getRawClassName(int c) {
       switch (c) {
         case 0:
-          return 'Pothole (D40)';
-        case 1:
           return 'Longitudinal (D00)';
-        case 2:
+        case 1:
           return 'Transverse (D10)';
-        case 3:
+        case 2:
           return 'Alligator (D20)';
-        case 4:
-          return 'SpeedBreaker';
+        case 3:
+          return 'Pothole (D40)';
         default:
           return 'Class_$c';
+      }
+    }
+
+    String getRddCode(int c) {
+      switch (c) {
+        case 0:
+          return 'D00';
+        case 1:
+          return 'D10';
+        case 2:
+          return 'D20';
+        case 3:
+          return 'D40';
+        default:
+          return 'D${c * 10}';
       }
     }
 
@@ -467,7 +556,6 @@ class TfliteEngine {
       double bestS = -1.0;
 
       for (int c = 0; c < numClasses; c++) {
-        if (c == 4) continue; // Skip Speed Breaker
         final score = getValue(4 + c, a);
         if (score > bestS) {
           bestS = score;
@@ -521,7 +609,6 @@ class TfliteEngine {
       double bestScore = 0.0;
 
       for (int c = 0; c < numClasses; c++) {
-        if (c == 4) continue; // Skip Speed Breaker
         final score = getValue(4 + c, a);
         if (score > bestScore) {
           bestScore = score;
@@ -531,29 +618,6 @@ class TfliteEngine {
 
       if (bestScore < effThreshold || bestClassId < 0) {
         continue;
-      }
-
-      int remappedClassId;
-      String remappedClassName;
-      switch (bestClassId) {
-        case 0:
-          remappedClassId = 3; // D40 Pothole
-          remappedClassName = 'D40';
-          break;
-        case 1:
-          remappedClassId = 0; // D00 Longitudinal Crack
-          remappedClassName = 'D00';
-          break;
-        case 2:
-          remappedClassId = 1; // D10 Transverse Crack
-          remappedClassName = 'D10';
-          break;
-        case 3:
-          remappedClassId = 2; // D20 Alligator Crack
-          remappedClassName = 'D20';
-          break;
-        default:
-          continue;
       }
 
       final double cx = getValue(0, a) / meta.inputSize;
@@ -569,8 +633,8 @@ class TfliteEngine {
       if (right <= left || bottom <= top) continue;
 
       rawCandidates.add(DetectionResult(
-        classId: remappedClassId,
-        className: remappedClassName,
+        classId: bestClassId,
+        className: getRddCode(bestClassId),
         confidence: bestScore,
         normalizedRect: Rect.fromLTRB(left, top, right, bottom),
       ));
@@ -579,29 +643,9 @@ class TfliteEngine {
     // If forceDetections is true and no candidate exceeded 0.001, seed with the top3 raw predictions
     if (forceDetections && rawCandidates.isEmpty && top3.isNotEmpty) {
       for (final t in top3) {
-        int remappedClassId = 3;
-        String remappedClassName = 'D40';
-        switch (t.classId) {
-          case 0:
-            remappedClassId = 3;
-            remappedClassName = 'D40';
-            break;
-          case 1:
-            remappedClassId = 0;
-            remappedClassName = 'D00';
-            break;
-          case 2:
-            remappedClassId = 1;
-            remappedClassName = 'D10';
-            break;
-          case 3:
-            remappedClassId = 2;
-            remappedClassName = 'D20';
-            break;
-        }
         rawCandidates.add(DetectionResult(
-          classId: remappedClassId,
-          className: remappedClassName,
+          classId: t.classId,
+          className: getRddCode(t.classId),
           confidence: t.conf > 0 ? t.conf : 0.001,
           normalizedRect: t.box,
         ));

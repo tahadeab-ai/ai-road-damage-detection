@@ -25,7 +25,7 @@ import 'detection_state.dart';
 /// - IGNORES the Occlusion Detector.
 /// - IGNORES Detection Filters (border, min area, aspect ratio, confidence floors).
 /// - Draws ANY box the model outputs, regardless of confidence.
-const bool kDebugForceDetections = true;
+const bool kDebugForceDetections = false;
 
 /// Debug flag: Set to true only during development benchmarking or regression validation.
 /// In production and release builds, TFLite is the exclusive inference path.
