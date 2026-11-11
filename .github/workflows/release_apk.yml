@@ -49,16 +49,17 @@ jobs:
         run: cargo install cargo-ndk
 
       - name: Cross-Compile velopath_engine for Android ABIs
+        working-directory: rust_core
         run: |
-          mkdir -p mobile_app/android/app/src/main/jniLibs/arm64-v8a
-          mkdir -p mobile_app/android/app/src/main/jniLibs/armeabi-v7a
-          mkdir -p mobile_app/android/app/src/main/jniLibs/x86_64
+          mkdir -p ../mobile_app/android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p ../mobile_app/android/app/src/main/jniLibs/armeabi-v7a
+          mkdir -p ../mobile_app/android/app/src/main/jniLibs/x86_64
 
-          cargo ndk -t arm64-v8a -o mobile_app/android/app/src/main/jniLibs build --manifest-path rust_core/Cargo.toml -p velopath_engine --release
-          cargo ndk -t armeabi-v7a -o mobile_app/android/app/src/main/jniLibs build --manifest-path rust_core/Cargo.toml -p velopath_engine --release
-          cargo ndk -t x86_64 -o mobile_app/android/app/src/main/jniLibs build --manifest-path rust_core/Cargo.toml -p velopath_engine --release
+          cargo ndk -t arm64-v8a -o ../mobile_app/android/app/src/main/jniLibs build -p velopath_engine --release
+          cargo ndk -t armeabi-v7a -o ../mobile_app/android/app/src/main/jniLibs build -p velopath_engine --release
+          cargo ndk -t x86_64 -o ../mobile_app/android/app/src/main/jniLibs build -p velopath_engine --release
 
-          ls -lh mobile_app/android/app/src/main/jniLibs/*
+          ls -lh ../mobile_app/android/app/src/main/jniLibs/*
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
