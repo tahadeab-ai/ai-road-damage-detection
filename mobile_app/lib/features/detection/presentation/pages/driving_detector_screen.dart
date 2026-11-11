@@ -376,7 +376,7 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
               ).animate().shimmer(duration: 2000.ms),
               const SizedBox(height: 16),
               TextButton(
-                onPressed: () => openAppSettings(),
+                onPressed: () => _permissionMachine.openAppSettingsMenu(),
                 child: Text(
                   AppStrings.openSettings,
                   style: const TextStyle(

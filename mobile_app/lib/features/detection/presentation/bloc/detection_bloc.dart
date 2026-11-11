@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/ffi/velopath_rust_bridge.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
@@ -140,7 +141,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         latitude: state.gpsData.latitude,
         longitude: state.gpsData.longitude,
         speedKmh: state.gpsData.speedKmh,
-        headingDeg: state.gpsData.heading,
+        headingDeg: 0.0,
         timestampMs: now.millisecondsSinceEpoch,
       );
 
@@ -166,9 +167,9 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           if (d.severityScore > maxSeverity) maxSeverity = d.severityScore;
           return DetectionResult(
             classId: d.defectClass.index,
-            label: d.defectClass.displayName,
+            className: d.defectClass.displayName,
             confidence: d.confidence,
-            box: [d.bbox.ymin, d.bbox.xmin, d.bbox.ymax, d.bbox.xmax],
+            normalizedRect: Rect.fromLTRB(d.bbox.xmin, d.bbox.ymin, d.bbox.xmax, d.bbox.ymax),
           );
         }).toList();
       } else {
