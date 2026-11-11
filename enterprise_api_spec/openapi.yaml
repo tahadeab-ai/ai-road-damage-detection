@@ -1,0 +1,86 @@
+openapi: 3.1.0
+info:
+  title: VeloPath AI Municipal Fleet & Telemetry Ingestion API
+  version: 2.0.0
+  description: High-throughput ingestion API for real-time and batched road defect detections, ground geometry, and fleet telemetry.
+servers:
+  - url: https://api.velopath.ai/v2
+    description: Production Fleet Ingestion Gateway
+
+paths:
+  /telemetry/ingest:
+    post:
+      summary: Batch Ingest Road Surface Incidents
+      description: Batches confirmed road defect detections with GPS coordinates, estimated severity, and WebP evidence crops.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - payload
+              properties:
+                payload:
+                  type: string
+                  format: binary
+                  description: Compressed JSON GeoJSON FeatureCollection of defect incidents.
+      responses:
+        '200':
+          description: Incidents ingested and queued for spatial deduplication.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ingested_count:
+                    type: integer
+                  duplicate_suppressed_count:
+                    type: integer
+                  batch_id:
+                    type: string
+
+  /defects/heatmap:
+    get:
+      summary: Spatial Defect Heatmap
+      parameters:
+        - name: bbox
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "-122.52,37.70,-122.35,37.83"
+        - name: min_severity
+          in: query
+          schema:
+            type: number
+            default: 5.0
+      responses:
+        '200':
+          description: GeoJSON FeatureCollection containing defect clusters and physical severity scores.
+
+  /fleet/sessions:
+    post:
+      summary: Register In-Car Dashcam Inspection Session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - vehicle_id
+                - mount_height_m
+                - pitch_angle_deg
+              properties:
+                vehicle_id:
+                  type: string
+                mount_height_m:
+                  type: number
+                  example: 1.25
+                pitch_angle_deg:
+                  type: number
+                  example: 15.0
+      responses:
+        '201':
+          description: Session registered successfully.

@@ -20,7 +20,9 @@
 # Hive & Persistence serialization
 -keep class io.hive.** { *; }
 
-# JNI & Native Library preservation
+# VeloPath AI Native FFI bindings
+-keep class ai.velopath.roadguard.** { *; }
+-dontwarn ai.velopath.roadguard.**
 -keepclasseswithmembernames class * {
     native <methods>;
 }

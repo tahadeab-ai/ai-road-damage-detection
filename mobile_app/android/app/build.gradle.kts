@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.roadguard.road_guard_mobile"
+    namespace = "ai.velopath.roadguard"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.roadguard.road_guard_mobile"
+        applicationId = "ai.velopath.roadguard"
         minSdk = 26
         targetSdk = 34
         versionCode = flutter.versionCode
@@ -31,8 +31,15 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            pickFirsts += listOf("**/libvelopath_engine.so", "**/libonnxruntime.so", "**/libtflite_c.so")
+            keepDebugSymbols += listOf("**/libvelopath_engine.so")
+        }
+    }
+
     aaptOptions {
-        noCompress += listOf("tflite")
+        noCompress += listOf("tflite", "onnx")
     }
 
     signingConfigs {

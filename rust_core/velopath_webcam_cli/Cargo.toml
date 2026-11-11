@@ -1,0 +1,16 @@
+[package]
+name = "velopath_webcam_cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "VeloPath AI Universal Edge & Webcam CLI Runner"
+
+[dependencies]
+velopath_engine = { path = "../velopath_engine" }
+clap = { version = "4.5", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1.0"
+chrono = "0.4"
