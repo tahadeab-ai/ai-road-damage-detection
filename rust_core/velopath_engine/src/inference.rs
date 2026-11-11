@@ -19,6 +19,7 @@ impl ExecutionTier {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ModelManifest {
     pub input_shape: [usize; 4], // [1, 640, 640, 3] or [1, 384, 512, 3]
     pub num_classes: usize,      // 4

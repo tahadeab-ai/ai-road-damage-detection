@@ -1,6 +1,5 @@
 use crate::types::RoadRoiConfig;
 use fast_image_resize as fr;
-use std::num::NonZeroU32;
 
 /// Frame buffer formats supported by the zero-copy pre-processor
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,15 +122,15 @@ pub fn preprocess_frame_with_roi(
 
     // 4. Use fast_image_resize with SIMD acceleration
     let src_image = fr::images::Image::from_vec_u8(
-        NonZeroU32::new(cropped_w).ok_or("Invalid cropped width")?,
-        NonZeroU32::new(cropped_h).ok_or("Invalid cropped height")?,
+        cropped_w,
+        cropped_h,
         cropped_rgb,
         fr::PixelType::U8x3,
     ).map_err(|e| e.to_string())?;
 
     let mut dst_image = fr::images::Image::new(
-        NonZeroU32::new(scaled_w.max(1)).ok_or("Invalid scaled width")?,
-        NonZeroU32::new(scaled_h.max(1)).ok_or("Invalid scaled height")?,
+        scaled_w.max(1),
+        scaled_h.max(1),
         fr::PixelType::U8x3,
     );
 
