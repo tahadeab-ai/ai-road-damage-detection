@@ -2,8 +2,9 @@ name: VeloPath AI Cloud Builder & Release APK
 
 on:
   push:
-    branches: [ "main", "feature/*" ]
+    branches: [ "main", "feature/**" ]
     tags: [ "v*.*.*" ]
+  workflow_dispatch:
   pull_request:
     branches: [ "main" ]
 
