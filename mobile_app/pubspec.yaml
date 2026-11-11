@@ -48,10 +48,10 @@ dev_dependencies:
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
-  image_path: "assets/icon/app_icon.png"
+  image_path: "assets/icons/velopath_icon.png"
   min_sdk_android: 26
   adaptive_icon_background: "#0B0F17"
-  adaptive_icon_foreground: "assets/icon/app_icon.png"
+  adaptive_icon_foreground: "assets/icons/velopath_icon.png"
 
 flutter:
   uses-material-design: true
@@ -60,3 +60,4 @@ flutter:
     - assets/models/
     - assets/sounds/
     - assets/icon/
+    - assets/icons/

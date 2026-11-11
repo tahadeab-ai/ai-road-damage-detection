@@ -17,6 +17,29 @@ pub use storage::SqliteStorage;
 pub use tracker::SpatioTemporalTracker;
 pub use types::*;
 
+// C ABI FFI Symbols for mobile integration
+#[no_mangle]
+pub extern "C" fn velopath_engine_version() -> i32 {
+    200 // v2.0.0
+}
+
+#[no_mangle]
+pub extern "C" fn velopath_engine_create() -> *mut VeloPathEngine {
+    match VeloPathEngine::new(None, None) {
+        Ok(engine) => Box::into_raw(Box::new(engine)),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn velopath_engine_destroy(ptr: *mut VeloPathEngine) {
+    if !ptr.is_null() {
+        unsafe {
+            drop(Box::from_raw(ptr));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,6 +19,9 @@ class DetectionState extends Equatable {
   final bool isTorchOn;
   final bool isRoadDetected;
   final int sceneStateIndex; // 0: checking, 1: road, 2: nonRoad, 3: detecting, 4: hazardDetected, 5: trackingHazard
+  final double maxSeverityScore;
+  final String sceneStatusText;
+  final bool isNativeRustEngine;
   final Failure? failure;
 
   const DetectionState({
@@ -36,6 +39,9 @@ class DetectionState extends Equatable {
     this.isTorchOn = false,
     this.isRoadDetected = true,
     this.sceneStateIndex = 1,
+    this.maxSeverityScore = 0.0,
+    this.sceneStatusText = 'OPTIMAL',
+    this.isNativeRustEngine = false,
     this.failure,
   });
 
@@ -57,6 +63,9 @@ class DetectionState extends Equatable {
       isTorchOn: false,
       isRoadDetected: true,
       sceneStateIndex: 0,
+      maxSeverityScore: 0.0,
+      sceneStatusText: 'INITIALIZING',
+      isNativeRustEngine: false,
       failure: null,
     );
   }
@@ -76,6 +85,9 @@ class DetectionState extends Equatable {
     bool? isTorchOn,
     bool? isRoadDetected,
     int? sceneStateIndex,
+    double? maxSeverityScore,
+    String? sceneStatusText,
+    bool? isNativeRustEngine,
     Failure? failure,
   }) {
     return DetectionState(
@@ -93,6 +105,9 @@ class DetectionState extends Equatable {
       isTorchOn: isTorchOn ?? this.isTorchOn,
       isRoadDetected: isRoadDetected ?? this.isRoadDetected,
       sceneStateIndex: sceneStateIndex ?? this.sceneStateIndex,
+      maxSeverityScore: maxSeverityScore ?? this.maxSeverityScore,
+      sceneStatusText: sceneStatusText ?? this.sceneStatusText,
+      isNativeRustEngine: isNativeRustEngine ?? this.isNativeRustEngine,
       failure: failure ?? this.failure,
     );
   }
@@ -113,6 +128,9 @@ class DetectionState extends Equatable {
         isTorchOn,
         isRoadDetected,
         sceneStateIndex,
+        maxSeverityScore,
+        sceneStatusText,
+        isNativeRustEngine,
         failure,
       ];
 }

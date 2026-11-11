@@ -169,6 +169,26 @@ class CameraHudOverlay extends StatelessWidget {
                             fontFamily: 'monospace',
                           ),
                         ),
+                        if (state.maxSeverityScore > 0) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: AppColors.d40Pothole.withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: AppColors.d40Pothole, width: 0.5),
+                            ),
+                            child: Text(
+                              'SEV ${state.maxSeverityScore.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: AppColors.d40Pothole,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -278,7 +298,11 @@ class CameraHudOverlay extends StatelessWidget {
     IconData statusIcon;
     Color statusColor;
 
-    if (!isRoad) {
+    if (state.sceneStatusText != 'OPTIMAL' && state.sceneStatusText != 'INITIALIZING') {
+      statusText = state.sceneStatusText;
+      statusIcon = Icons.sensors_off_rounded;
+      statusColor = AppColors.warning;
+    } else if (!isRoad) {
       statusText = AppStrings.sceneRoadNotDetected;
       statusIcon = Icons.visibility_off_rounded;
       statusColor = AppColors.warning;

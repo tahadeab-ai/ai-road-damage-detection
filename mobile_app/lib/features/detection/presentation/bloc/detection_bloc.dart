@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/ffi/velopath_rust_bridge.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
 import '../../../../core/utils/image_processor.dart';
 import '../../../../core/utils/snapshot_capture_service.dart';
@@ -16,6 +17,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
   final TfliteEngine tfliteEngine;
   final GpsService gpsService;
   final HazardRepository hazardRepository;
+  final VeloPathRustBridge _rustBridge = VeloPathRustBridge.instance;
   final AlertCooldownManager _alertManager = AlertCooldownManager();
   final TemporalFilter _temporalFilter = TemporalFilter(
     iouThreshold: 0.35,
@@ -126,56 +128,94 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     final stopwatch = Stopwatch()..start();
 
     try {
+      final now = DateTime.now();
+      final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
+      _lastFrameTime = now;
+
       // 1. Process camera image bytes into normalized tensor buffer
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
-      // 2. Road Surface Binary Gatekeeper (road_gate.tflite / MobileNetV3)
-      // Skips YOLO detection if classified as Non-Road (e.g. indoor floors, rugs, tiles, furniture)
-      final isRoad = await tfliteEngine.checkRoadSurface(float32Buffer);
-      List<DetectionResult> rawDetections = [];
+      // 2. Invoke VeloPath Rust FFI Engine Bridge (with zero-lag native execution)
+      final telemetry = VeloPathGpsTelemetry(
+        latitude: state.gpsData.latitude,
+        longitude: state.gpsData.longitude,
+        speedKmh: state.gpsData.speedKmh,
+        headingDeg: state.gpsData.heading,
+        timestampMs: now.millisecondsSinceEpoch,
+      );
 
-      if (isRoad) {
-        // 3. Execute on-device YOLO11 inference with elevated threshold & road ROI masking
-        rawDetections = await tfliteEngine.runInference(
-          float32Buffer,
-          confThreshold: state.confidenceThreshold,
-          iouThreshold: 0.35,
-          roadRoiTop: 0.35,
-        );
+      final frameBytes = event.image.planes[0].bytes;
+      final rustResult = await _rustBridge.processFrame(
+        frameBytes: frameBytes,
+        width: event.image.width,
+        height: event.image.height,
+        telemetry: telemetry,
+        dtSeconds: deltaSec > 0.001 ? deltaSec : 0.033,
+      );
+
+      // 3. Fallback to local on-device pipeline if native Rust .so is not compiled locally
+      final bool isRoad;
+      List<DetectionResult> rawDetections = [];
+      double maxSeverity = 0.0;
+      String statusText = rustResult.sceneStatus.code;
+
+      if (rustResult.isNativeExecution && rustResult.sceneStatus == VeloPathSceneStatus.optimal) {
+        isRoad = true;
+        // Map native Rust detections
+        rawDetections = rustResult.activeDefects.map((d) {
+          if (d.severityScore > maxSeverity) maxSeverity = d.severityScore;
+          return DetectionResult(
+            classId: d.defectClass.index,
+            label: d.defectClass.displayName,
+            confidence: d.confidence,
+            box: [d.bbox.ymin, d.bbox.xmin, d.bbox.ymax, d.bbox.xmax],
+          );
+        }).toList();
+      } else {
+        // Fallback to local TFLite detector
+        isRoad = await tfliteEngine.checkRoadSurface(float32Buffer);
+        if (isRoad) {
+          rawDetections = await tfliteEngine.runInference(
+            float32Buffer,
+            confThreshold: state.confidenceThreshold,
+            iouThreshold: 0.35,
+            roadRoiTop: 0.25, // Synchronized with Guardrail #3 ROI crop
+          );
+          for (final d in rawDetections) {
+            final sev = (d.classId == 3 ? 9.0 : 4.0) * d.confidence;
+            if (sev > maxSeverity) maxSeverity = sev;
+          }
+        } else {
+          statusText = 'NON-ROAD SURFACE';
+        }
       }
 
       stopwatch.stop();
       final latencyMs = stopwatch.elapsedMilliseconds;
+      final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 120.0) : 0.0;
 
-      // 4. Compute frame rate
-      final now = DateTime.now();
-      final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
-      _lastFrameTime = now;
-      final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 60.0) : 0.0;
-
-      // 5. Temporal Tracking & Coordinate EMA Smoothing with Persistent Spatial Lock
+      // 4. Temporal Tracking & Coordinate EMA Smoothing with Persistent Spatial Lock
       final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
 
-      // 6. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
+      // 5. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
       await _alertManager.evaluateAlerts(
         detections: trackedList,
         currentSpeedKmh: state.gpsData.speedKmh,
         timestamp: now,
       );
 
-      // 7. Check for confirmed critical hazards (for visual HUD banners)
+      // 6. Check for confirmed critical hazards (for visual HUD banners)
       DetectionResult? criticalAlert;
       final criticalTracked = trackedList.where((t) => t.isCritical).toList();
       if (criticalTracked.isNotEmpty) {
         criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // 8. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
+      // 7. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
       if (confirmedTracks.isNotEmpty) {
         for (final track in confirmedTracks) {
-          // Strictly prevent duplicate logging for the same physical road damage track
           if (track.hasBeenLogged) continue;
           track.hasBeenLogged = true;
 
@@ -209,6 +249,9 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         fps: double.parse(fps.toStringAsFixed(1)),
         criticalHazardAlert: () => criticalAlert,
         totalLoggedCount: loggedCount,
+        maxSeverityScore: maxSeverity,
+        sceneStatusText: statusText,
+        isNativeRustEngine: rustResult.isNativeExecution,
       ));
     } catch (_) {
       // Avoid crashing live video loop on corrupted single frame

@@ -3,8 +3,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/constants/colors.dart';
+import '../../../../core/lifecycle/permission_state_machine.dart';
 import '../../../../core/localization/app_localizations.dart';
 import '../bloc/detection_bloc.dart';
 import '../bloc/detection_event.dart';
@@ -23,9 +23,8 @@ class DrivingDetectorScreen extends StatefulWidget {
 class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   CameraController? _cameraController;
+  final PermissionStateMachine _permissionMachine = PermissionStateMachine();
   bool _isCameraReady = false;
-  bool _isPermissionGranted = false;
-  bool _isCheckingPermission = true;
   late AnimationController _animController;
 
   @override
@@ -37,72 +36,52 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
       duration: const Duration(seconds: 1),
     )..repeat();
 
+    _permissionMachine.addListener(_onPermissionStateChanged);
     _verifyPermissionsAndSetupCamera();
+  }
+
+  void _onPermissionStateChanged() {
+    if (mounted) {
+      setState(() {});
+      if (_permissionMachine.isReady && _cameraController == null) {
+        _initializeCamera();
+      }
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Re-check permissions and re-assemble camera when returning to foreground
+      // Re-verify sequential permissions before instantiating hardware controller
       _verifyPermissionsAndSetupCamera();
     } else if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       _stopAndDisposeCamera();
     }
   }
 
-  /// Verifies camera and location permission statuses before instantiating hardware controller.
+  /// Verifies sequential permissions through PermissionStateMachine before instantiating hardware controller.
   Future<void> _verifyPermissionsAndSetupCamera() async {
-    setState(() => _isCheckingPermission = true);
-
     try {
-      final cameraStatus = await Permission.camera.status;
-      final locationStatus = await Permission.locationWhenInUse.status;
-
-      final bothGranted = cameraStatus.isGranted && locationStatus.isGranted;
-
+      final granted = await _permissionMachine.requestSequentialPermissions();
       if (!mounted) return;
 
-      setState(() {
-        _isPermissionGranted = bothGranted;
-        _isCheckingPermission = false;
-      });
-
-      if (bothGranted) {
+      if (granted) {
         await _initializeCamera();
       }
     } catch (e) {
       debugPrint('[DrivingDetectorScreen] Permission verification notice: $e');
-      if (mounted) {
-        setState(() {
-          _isPermissionGranted = false;
-          _isCheckingPermission = false;
-        });
-      }
     }
   }
 
-  /// Explicitly requests camera and location permissions upon user intent.
+  /// Explicitly requests sequential permissions upon user interaction.
   Future<void> _requestPermissions() async {
-    final statuses = await [
-      Permission.camera,
-      Permission.locationWhenInUse,
-    ].request();
-
-    final cameraGranted = statuses[Permission.camera]?.isGranted ?? false;
-    final locationGranted = statuses[Permission.locationWhenInUse]?.isGranted ?? false;
-
+    final granted = await _permissionMachine.requestSequentialPermissions();
     if (!mounted) return;
 
-    if (cameraGranted && locationGranted) {
-      setState(() => _isPermissionGranted = true);
+    if (granted) {
       await _initializeCamera();
-    } else {
-      setState(() => _isPermissionGranted = false);
-      // If permanently denied, prompt user to open settings
-      if (statuses[Permission.camera]?.isPermanentlyDenied == true ||
-          statuses[Permission.locationWhenInUse]?.isPermanentlyDenied == true) {
-        openAppSettings();
-      }
+    } else if (_permissionMachine.currentStep == PermissionStep.permanentlyDenied) {
+      _permissionMachine.openAppSettingsMenu();
     }
   }
 
@@ -190,6 +169,8 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _permissionMachine.removeListener(_onPermissionStateChanged);
+    _permissionMachine.dispose();
     _stopAndDisposeCamera();
     _animController.dispose();
     super.dispose();
@@ -220,8 +201,8 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
               builder: (context, state) {
                 final previewAspect = _getPreviewAspectRatio(context);
 
-                // Permission Guard Overlay: displayed if camera / location permissions are missing
-                if (!_isPermissionGranted && !_isCheckingPermission) {
+                // Permission Guard Overlay: displayed if sequential permissions are not yet ready
+                if (!_permissionMachine.isReady) {
                   return _buildPermissionGuardOverlay();
                 }
 

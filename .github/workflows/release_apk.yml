@@ -71,6 +71,10 @@ jobs:
         working-directory: mobile_app
         run: flutter pub get
 
+      - name: Generate High-Resolution VeloPath Launcher Icons
+        working-directory: mobile_app
+        run: dart run flutter_launcher_icons
+
       - name: Flutter Static Analysis
         working-directory: mobile_app
         run: flutter analyze

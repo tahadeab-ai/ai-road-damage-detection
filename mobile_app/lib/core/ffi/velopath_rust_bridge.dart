@@ -161,6 +161,9 @@ class VeloPathRoiConfig {
   });
 }
 
+typedef _VersionNative = Int32 Function();
+typedef _VersionDart = int Function();
+
 /// Thread-safe VeloPath Rust FFI Bridge with Automatic Diagnostic Fallback (Guardrail #5)
 class VeloPathRustBridge {
   static final VeloPathRustBridge instance = VeloPathRustBridge._internal();
@@ -180,18 +183,20 @@ class VeloPathRustBridge {
       if (Platform.isAndroid) {
         _dylib = DynamicLibrary.open('libvelopath_engine.so');
         _isNativeLoaded = true;
-        debugPrint('[VeloPath FFI] Successfully linked libvelopath_engine.so native library.');
       } else if (Platform.isIOS) {
         _dylib = DynamicLibrary.process();
         _isNativeLoaded = true;
-        debugPrint('[VeloPath FFI] Successfully linked iOS process symbols.');
       } else if (Platform.isWindows) {
         _dylib = DynamicLibrary.open('velopath_engine.dll');
         _isNativeLoaded = true;
-        debugPrint('[VeloPath FFI] Successfully linked Windows velopath_engine.dll.');
       } else {
         _isNativeLoaded = false;
-        debugPrint('[VeloPath FFI] Platform not natively supported, using self-contained fallback.');
+      }
+
+      if (_dylib != null) {
+        final versionFn = _dylib!.lookupFunction<_VersionNative, _VersionDart>('velopath_engine_version');
+        final ver = versionFn();
+        debugPrint('[VeloPath FFI] Successfully linked native library! Native Engine Version: $ver');
       }
     } catch (e) {
       _isNativeLoaded = false;
