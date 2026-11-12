@@ -85,8 +85,21 @@ jobs:
         working-directory: mobile_app
         run: flutter test
 
+      - name: Generate CI Release Keystore
+        working-directory: mobile_app
+        run: |
+          keytool -genkey -v -keystore android/app/release.keystore \
+            -alias velopath -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass velopath123 -keypass velopath123 \
+            -dname "CN=VeloPath AI, OU=Engineering, O=VeloPath, L=San Francisco, S=CA, C=US"
+
       - name: Build Signed ABI-Split Release APKs
         working-directory: mobile_app
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/mobile_app/android/app/release.keystore
+          ANDROID_KEYSTORE_PASSWORD: velopath123
+          ANDROID_KEY_ALIAS: velopath
+          ANDROID_KEY_PASSWORD: velopath123
         run: flutter build apk --release --split-per-abi
 
       - name: Compute Checksums
