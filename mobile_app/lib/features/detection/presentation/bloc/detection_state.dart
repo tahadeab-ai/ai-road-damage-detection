@@ -74,7 +74,7 @@ class DetectionState extends Equatable {
       fps: 0.0,
       gpsData: GpsData.empty,
       criticalHazardAlert: null,
-      confidenceThreshold: 0.50,
+      confidenceThreshold: 0.20,
       totalLoggedCount: 0,
       isMuted: false,
       isTorchOn: false,

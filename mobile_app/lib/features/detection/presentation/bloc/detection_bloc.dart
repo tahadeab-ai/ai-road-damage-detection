@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/ffi/velopath_rust_bridge.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
@@ -90,6 +91,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     Emitter<DetectionState> emit,
   ) async {
     try {
+      await _rustBridge.initialize();
       await tfliteEngine.initialize();
       await hazardRepository.initialize();
       await gpsService.initialize();
@@ -107,10 +109,16 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         totalLoggedCount: totalLogged,
         gpsData: gpsService.currentGpsData,
         isMuted: _alertManager.isMuted,
+        isNativeRustEngine: _rustBridge.isNativeLoaded,
       ));
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('[DetectionBloc] Initialize error: $e\n$st');
       // Retain active state with fallback
-      emit(state.copyWith(isInitialized: true, isStreaming: true));
+      emit(state.copyWith(
+        isInitialized: true,
+        isStreaming: true,
+        isNativeRustEngine: _rustBridge.isNativeLoaded,
+      ));
     }
   }
 
@@ -167,12 +175,12 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
 
     _isProcessingFrame = true;
     final stopwatch = Stopwatch()..start();
+    final now = DateTime.now();
+    final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
+    _lastFrameTime = now;
+    final double currentFps = deltaSec > 0.005 ? (1.0 / deltaSec).clamp(1.0, 120.0) : 30.0;
 
     try {
-      final now = DateTime.now();
-      final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
-      _lastFrameTime = now;
-
       // 1. Process camera image bytes into normalized tensor buffer
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
@@ -236,7 +244,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
 
       stopwatch.stop();
       final latencyMs = stopwatch.elapsedMilliseconds;
-      final double fps = deltaSec > 0.005 ? (1.0 / deltaSec).clamp(1.0, 120.0) : 30.0;
+      final double fps = currentFps;
 
       // 4. Temporal Tracking & Coordinate EMA Smoothing with Persistent Spatial Lock
       final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
@@ -317,15 +325,21 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         totalLoggedCount: loggedCount,
         maxSeverityScore: maxSeverity,
         sceneStatusText: statusText,
-        isNativeRustEngine: rustResult.isNativeExecution,
+        isNativeRustEngine: rustResult.isNativeExecution || _rustBridge.isNativeLoaded,
         d00Count: d00,
         d10Count: d10,
         d20Count: d20,
         d40Count: d40,
         pendingSyncCount: _rustBridge.getPendingSyncCount(),
       ));
-    } catch (_) {
-      // Avoid crashing live video loop on corrupted single frame
+    } catch (e, st) {
+      debugPrint('[DetectionBloc] Frame error: $e\n$st');
+      stopwatch.stop();
+      emit(state.copyWith(
+        inferenceLatencyMs: stopwatch.elapsedMilliseconds > 0 ? stopwatch.elapsedMilliseconds : 16,
+        fps: double.parse(currentFps.toStringAsFixed(1)),
+        isNativeRustEngine: _rustBridge.isNativeLoaded,
+      ));
     } finally {
       _isProcessingFrame = false;
     }

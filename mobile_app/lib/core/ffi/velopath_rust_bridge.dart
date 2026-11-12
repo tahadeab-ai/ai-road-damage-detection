@@ -218,6 +218,14 @@ class VeloPathRustBridge {
 
   bool get isNativeLoaded => _isNativeLoaded;
 
+  /// Explicit async initialization of the native library
+  Future<bool> initialize() async {
+    if (!_isNativeLoaded || _dylib == null) {
+      _initializeDynamicLibrary();
+    }
+    return _isNativeLoaded;
+  }
+
   void _initializeDynamicLibrary() {
     try {
       if (Platform.isAndroid) {

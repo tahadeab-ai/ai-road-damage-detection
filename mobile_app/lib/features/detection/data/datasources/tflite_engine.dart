@@ -160,7 +160,7 @@ class TfliteEngine {
   /// Runs inference on a normalized [1, 640, 640, 3] Float32 buffer.
   Future<List<DetectionResult>> runInference(
     Float32List inputBuffer, {
-    double confThreshold = 0.50,
+    double confThreshold = 0.20,
     double iouThreshold = 0.35,
     double roadRoiTop = 0.25,
     bool benchMode = false,
@@ -170,40 +170,71 @@ class TfliteEngine {
     }
 
     final effectiveRoiTop = benchMode ? 0.0 : roadRoiTop;
-    final effectiveConf = benchMode ? (confThreshold > 0.35 ? 0.35 : confThreshold) : confThreshold;
+    final effectiveConf = benchMode ? (confThreshold > 0.15 ? 0.15 : confThreshold) : confThreshold;
 
     // If interpreter is active, run native TFLite execution
     if (_interpreter != null) {
       try {
+        final inputTensor = _interpreter!.getInputTensor(0);
+        final inputShape = inputTensor.shape;
         final outputTensor = _interpreter!.getOutputTensor(0);
         final outputShape = outputTensor.shape;
 
-        // Support both [1, 8, 8400] and [1, 8400, 8]
-        final bool isChannelsFirst = outputShape.length >= 3 && outputShape[1] == 8;
-        final outputBuffer = List.generate(
-          outputShape[0],
-          (_) => List.generate(
-            outputShape[1],
-            (_) => List.filled(outputShape[2], 0.0),
-          ),
-        );
+        // 1. Prepare Input Tensor (handle NCHW vs NHWC and quantization)
+        final bool isNchw = inputShape.length >= 4 && inputShape[1] == 3;
+        final Float32List nchwBuffer;
+        if (isNchw) {
+          nchwBuffer = Float32List(640 * 640 * 3);
+          const int planeSize = 640 * 640;
+          for (int i = 0; i < planeSize; i++) {
+            nchwBuffer[i] = inputBuffer[i * 3]; // R
+            nchwBuffer[planeSize + i] = inputBuffer[i * 3 + 1]; // G
+            nchwBuffer[2 * planeSize + i] = inputBuffer[i * 3 + 2]; // B
+          }
+        } else {
+          nchwBuffer = inputBuffer;
+        }
 
-        final inputReshaped = inputBuffer.buffer.asFloat32List();
-        _interpreter!.run(inputReshaped, outputBuffer);
+        final ByteBuffer inputByteBuffer;
+        if (inputTensor.type == TensorType.uint8) {
+          final scale = inputTensor.params.scale > 0 ? inputTensor.params.scale : (1.0 / 255.0);
+          final zeroPoint = inputTensor.params.zeroPoint;
+          final u8 = Uint8List(nchwBuffer.length);
+          for (int i = 0; i < nchwBuffer.length; i++) {
+            u8[i] = ((nchwBuffer[i] / scale) + zeroPoint).round().clamp(0, 255);
+          }
+          inputByteBuffer = u8.buffer;
+        } else if (inputTensor.type == TensorType.int8) {
+          final scale = inputTensor.params.scale > 0 ? inputTensor.params.scale : (1.0 / 128.0);
+          final zeroPoint = inputTensor.params.zeroPoint;
+          final i8 = Int8List(nchwBuffer.length);
+          for (int i = 0; i < nchwBuffer.length; i++) {
+            i8[i] = ((nchwBuffer[i] / scale) + zeroPoint).round().clamp(-128, 127);
+          }
+          inputByteBuffer = i8.buffer;
+        } else {
+          inputByteBuffer = nchwBuffer.buffer;
+        }
 
-        final detections = _parseYolo11Output(
-          outputBuffer[0],
+        // 2. Prepare Output Tensor buffer
+        final int totalOutputElements = outputShape.reduce((a, b) => a * b);
+        final outputBuffer = Float32List(totalOutputElements);
+
+        _interpreter!.runForMultipleInputs([inputByteBuffer], {0: outputBuffer.buffer});
+
+        final detections = _parseFlatYolo11Output(
+          outputBuffer,
+          outputShape,
           effectiveConf,
           iouThreshold,
           roadRoiTop: effectiveRoiTop,
-          isChannelsFirst: isChannelsFirst,
         );
 
         if (detections.isNotEmpty || !benchMode) {
           return detections;
         }
-      } catch (e) {
-        debugPrint('[TfliteEngine] Notice during inference parsing: $e');
+      } catch (e, st) {
+        debugPrint('[TfliteEngine] Notice during inference parsing: $e\n$st');
       }
     }
 
@@ -214,34 +245,50 @@ class TfliteEngine {
     return [];
   }
 
-  /// Parses raw YOLO11 tensor matrix [8, 8400] or [8400, 8] into bounding boxes and applies NMS.
-  List<DetectionResult> _parseYolo11Output(
-    List<List<double>> outputMatrix,
+  /// Parses flat YOLO11 tensor buffer [1, C, N] or [1, N, C] into bounding boxes and applies NMS.
+  List<DetectionResult> _parseFlatYolo11Output(
+    Float32List outputBuffer,
+    List<int> outputShape,
     double confThreshold,
     double iouThreshold, {
     double roadRoiTop = 0.25,
-    bool isChannelsFirst = true,
   }) {
     final List<DetectionResult> candidates = [];
-    final int numPredictions = isChannelsFirst ? outputMatrix[0].length : outputMatrix.length;
+    final int dim1 = outputShape.length >= 2 ? outputShape[outputShape.length - 2] : 84;
+    final int dim2 = outputShape.isNotEmpty ? outputShape[outputShape.length - 1] : 8400;
+
+    // Detect Channels-First ([C, N] where C < N, e.g. [84, 8400]) vs Channels-Last ([N, C])
+    final bool isChannelsFirst = dim1 < dim2;
+    final int numChannels = isChannelsFirst ? dim1 : dim2;
+    final int numPredictions = isChannelsFirst ? dim2 : dim1;
+    final int numClasses = (numChannels - 4).clamp(1, 80);
 
     for (int i = 0; i < numPredictions; i++) {
-      final double cx = isChannelsFirst ? outputMatrix[0][i] : outputMatrix[i][0];
-      final double cy = isChannelsFirst ? outputMatrix[1][i] : outputMatrix[i][1];
-      final double w = isChannelsFirst ? outputMatrix[2][i] : outputMatrix[i][2];
-      final double h = isChannelsFirst ? outputMatrix[3][i] : outputMatrix[i][3];
+      final double cx = isChannelsFirst ? outputBuffer[0 * numPredictions + i] : outputBuffer[i * numChannels + 0];
+      final double cy = isChannelsFirst ? outputBuffer[1 * numPredictions + i] : outputBuffer[i * numChannels + 1];
+      final double w = isChannelsFirst ? outputBuffer[2 * numPredictions + i] : outputBuffer[i * numChannels + 2];
+      final double h = isChannelsFirst ? outputBuffer[3 * numPredictions + i] : outputBuffer[i * numChannels + 3];
+
+      // Handle both normalized (0.0..1.0) and pixel-space (0.0..640.0) coordinates
+      final double normCx = cx > 1.5 ? (cx / 640.0) : cx;
+      final double normCy = cy > 1.5 ? (cy / 640.0) : cy;
+      final double normW = w > 1.5 ? (w / 640.0) : w;
+      final double normH = h > 1.5 ? (h / 640.0) : h;
 
       // Suppress detections outside Road Surface ROI (top zone is sky/horizon)
-      if (cy < roadRoiTop) {
+      if (normCy < roadRoiTop) {
         continue;
       }
 
-      // Find highest class confidence among the 4 damage classes
+      // Find highest class confidence among available damage classes
       double maxScore = -1.0;
       int bestClassId = -1;
 
-      for (int c = 0; c < 4; c++) {
-        final double score = isChannelsFirst ? outputMatrix[4 + c][i] : outputMatrix[i][4 + c];
+      final int checkClasses = numClasses < 4 ? numClasses : 4;
+      for (int c = 0; c < checkClasses; c++) {
+        final double score = isChannelsFirst
+            ? outputBuffer[(4 + c) * numPredictions + i]
+            : outputBuffer[i * numChannels + (4 + c)];
         if (score > maxScore) {
           maxScore = score;
           bestClassId = c;
@@ -249,10 +296,10 @@ class TfliteEngine {
       }
 
       if (maxScore >= confThreshold && bestClassId >= 0) {
-        final double left = (cx - (w / 2.0)).clamp(0.0, 1.0);
-        final double top = (cy - (h / 2.0)).clamp(0.0, 1.0);
-        final double right = (cx + (w / 2.0)).clamp(0.0, 1.0);
-        final double bottom = (cy + (h / 2.0)).clamp(0.0, 1.0);
+        final double left = (normCx - (normW / 2.0)).clamp(0.0, 1.0);
+        final double top = (normCy - (normH / 2.0)).clamp(0.0, 1.0);
+        final double right = (normCx + (normW / 2.0)).clamp(0.0, 1.0);
+        final double bottom = (normCy + (normH / 2.0)).clamp(0.0, 1.0);
 
         final className = bestClassId < _labels.length ? _labels[bestClassId] : 'Defect #$bestClassId';
 

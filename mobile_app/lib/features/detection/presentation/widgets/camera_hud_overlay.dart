@@ -225,7 +225,7 @@ class CameraHudOverlay extends StatelessWidget {
                             const SizedBox(width: 4),
                             Text(
                               state.isNativeRustEngine
-                                  ? 'RUST SIMD + YOLO11n'
+                                  ? 'RUST SIMD + YOLO11n INT8'
                                   : 'DART + YOLO11n INT8',
                               style: TextStyle(
                                 color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.textPrimary,
