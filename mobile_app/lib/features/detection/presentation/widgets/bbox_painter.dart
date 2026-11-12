@@ -235,11 +235,12 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    // 5. Draw Localized Cyber HUD Badge Tag with Class Code, Track ID, Confidence, & Severity
+    // 5. Draw Localized Cyber HUD Badge Tag with Class Code, Track ID, Metric Sizing, Confidence, & Severity
     final String classCode = track.classId == 3 ? '[D40]' : (track.classId == 2 ? '[D20]' : (track.classId == 1 ? '[D10]' : '[D00]'));
     final double severity = (track.classId == 3 ? 9.0 : (track.classId == 2 ? 7.0 : (track.classId == 1 ? 4.5 : 3.5))) * track.confidence;
     final String badgeText = AppStrings.getDefectName(track.classId);
-    final String labelText = '$classCode $badgeText ${(track.confidence * 100).toInt()}% • SEV ${severity.toStringAsFixed(1)}';
+    final double estWidthCm = (track.smoothedRect.width * 250.0).clamp(5.0, 300.0);
+    final String labelText = '$classCode $badgeText ${(track.confidence * 100).toInt()}% • ~${estWidthCm.toInt()}cm • SEV ${severity.toStringAsFixed(1)}';
     _drawBadge(
       canvas,
       labelText,
@@ -260,7 +261,8 @@ class BBoxOverlayPainter extends CustomPainter {
 
     final String classCode = det.classId == 3 ? '[D40]' : (det.classId == 2 ? '[D20]' : (det.classId == 1 ? '[D10]' : '[D00]'));
     final double severity = (det.classId == 3 ? 9.0 : (det.classId == 2 ? 7.0 : (det.classId == 1 ? 4.5 : 3.5))) * det.confidence;
-    final String labelText = '$classCode ${AppStrings.getDefectName(det.classId)} ${(det.confidence * 100).toInt()}% • SEV ${severity.toStringAsFixed(1)}';
+    final double estWidthCm = (det.normalizedRect.width * 250.0).clamp(5.0, 300.0);
+    final String labelText = '$classCode ${AppStrings.getDefectName(det.classId)} ${(det.confidence * 100).toInt()}% • ~${estWidthCm.toInt()}cm • SEV ${severity.toStringAsFixed(1)}';
     _drawBadge(canvas, labelText, rect.topLeft, defectColor);
   }
 

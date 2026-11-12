@@ -9,7 +9,9 @@ abstract class DetectionEvent extends Equatable {
   List<Object?> get props => [];
 }
 
-class InitializeDetectionSystem extends DetectionEvent {}
+class InitializeDetectionSystem extends DetectionEvent {
+  const InitializeDetectionSystem();
+}
 
 class ProcessCameraFrame extends DetectionEvent {
   final CameraImage image;

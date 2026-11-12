@@ -21,8 +21,8 @@ pub use types::*;
 #[no_mangle]
 pub extern "C" fn velopath_engine_version() -> i32 {
     std::panic::catch_unwind(|| {
-        210 // v2.1.0
-    }).unwrap_or(210)
+        220 // v2.2.0
+    }).unwrap_or(220)
 }
 
 #[repr(C)]
@@ -156,6 +156,77 @@ pub extern "C" fn velopath_yuv_to_rgb_ffi(
         let out_rgb = unsafe { std::slice::from_raw_parts_mut(out_rgb_ptr, out_rgb_len) };
 
         yuv420_to_rgb(y_plane, uv_plane, width as usize, height as usize, is_nv21, out_rgb);
+        0
+    }));
+
+    result.unwrap_or(-3)
+}
+
+#[no_mangle]
+pub extern "C" fn velopath_yuv_to_rgb_tensor_ffi(
+    y_ptr: *const u8,
+    y_len: usize,
+    uv_ptr: *const u8,
+    uv_len: usize,
+    width: u32,
+    height: u32,
+    is_nv21: bool,
+    out_tensor_ptr: *mut f32,
+    out_tensor_len: usize,
+) -> i32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if y_ptr.is_null() || uv_ptr.is_null() || out_tensor_ptr.is_null() || width == 0 || height == 0 {
+            return -1;
+        }
+        let expected_tensor_len = 640 * 640 * 3;
+        if out_tensor_len < expected_tensor_len || y_len < (width * height) as usize {
+            return -2;
+        }
+
+        let y_plane = unsafe { std::slice::from_raw_parts(y_ptr, y_len) };
+        let uv_plane = unsafe { std::slice::from_raw_parts(uv_ptr, uv_len) };
+        let out_tensor = unsafe { std::slice::from_raw_parts_mut(out_tensor_ptr, out_tensor_len) };
+
+        let src_w = width as usize;
+        let src_h = height as usize;
+        let target_w = 640usize;
+        let target_h = 640usize;
+
+        for ty in 0..target_h {
+            let sy = (ty * src_h) / target_h;
+            let uv_y = sy / 2;
+            let row_offset = sy * src_w;
+            let uv_row_offset = uv_y * src_w;
+
+            for tx in 0..target_w {
+                let sx = (tx * src_w) / target_w;
+                let uv_x = (sx / 2) * 2;
+
+                let y_idx = (row_offset + sx).min(y_plane.len().saturating_sub(1));
+                let uv_idx = (uv_row_offset + uv_x).min(uv_plane.len().saturating_sub(2));
+
+                let y_val = y_plane[y_idx] as f32;
+                let (u_val, v_val) = if is_nv21 {
+                    (uv_plane[uv_idx + 1] as f32, uv_plane[uv_idx] as f32)
+                } else {
+                    (uv_plane[uv_idx] as f32, uv_plane[uv_idx + 1] as f32)
+                };
+
+                let c = y_val - 16.0;
+                let d = u_val - 128.0;
+                let e = v_val - 128.0;
+
+                let r = ((298.0 * c + 409.0 * e + 128.0) / 256.0).clamp(0.0, 255.0) / 255.0;
+                let g = ((298.0 * c - 100.0 * d - 208.0 * e + 128.0) / 256.0).clamp(0.0, 255.0) / 255.0;
+                let b = ((298.0 * c + 516.0 * d + 128.0) / 256.0).clamp(0.0, 255.0) / 255.0;
+
+                let dest_idx = (ty * target_w + tx) * 3;
+                out_tensor[dest_idx] = r;
+                out_tensor[dest_idx + 1] = g;
+                out_tensor[dest_idx + 2] = b;
+            }
+        }
+
         0
     }));
 

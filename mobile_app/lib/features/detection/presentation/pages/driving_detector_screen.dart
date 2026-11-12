@@ -26,6 +26,7 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   CameraController? _cameraController;
   final PermissionStateMachine _permissionMachine = PermissionStateMachine();
   bool _isCameraReady = false;
+  bool _isSubmittingFrame = false;
   late AnimationController _animController;
 
   @override
@@ -138,14 +139,24 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
 
       _cameraController = controller;
 
-      // Start live camera stream
+      // Start live camera stream with backpressure queuing protection
       await _cameraController!.startImageStream((CameraImage image) {
-        if (mounted) {
-          context.read<DetectionBloc>().add(ProcessCameraFrame(image));
-        }
+        if (!mounted || _isSubmittingFrame) return;
+        final bloc = context.read<DetectionBloc>();
+        if (!bloc.state.isStreaming || bloc.isProcessingFrame) return;
+
+        _isSubmittingFrame = true;
+        bloc.add(ProcessCameraFrame(image));
+        Future.microtask(() {
+          _isSubmittingFrame = false;
+        });
       });
 
       if (mounted) {
+        final bloc = context.read<DetectionBloc>();
+        if (!bloc.state.isInitialized) {
+          bloc.add(const InitializeDetectionSystem());
+        }
         setState(() => _isCameraReady = true);
       }
     } catch (e) {

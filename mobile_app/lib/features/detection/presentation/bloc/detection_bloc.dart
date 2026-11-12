@@ -18,18 +18,15 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
   final TfliteEngine tfliteEngine;
   final GpsService gpsService;
   final HazardRepository hazardRepository;
-  final VeloPathRustBridge _rustBridge = VeloPathRustBridge.instance;
+  final TemporalFilter _temporalFilter = TemporalFilter();
   final AlertCooldownManager _alertManager = AlertCooldownManager();
-  final TemporalFilter _temporalFilter = TemporalFilter(
-    iouThreshold: 0.35,
-    emaAlpha: 0.60,
-    persistenceMs: 350,
-    confirmationStreak: 3,
-  );
+  final VeloPathRustBridge _rustBridge = VeloPathRustBridge.instance;
 
   StreamSubscription<GpsData>? _gpsSubscription;
   bool _isProcessingFrame = false;
   DateTime _lastFrameTime = DateTime.now();
+
+  bool get isProcessingFrame => _isProcessingFrame;
 
   DetectionBloc({
     required this.tfliteEngine,
@@ -56,7 +53,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     final nextBenchMode = !state.isBenchTestMode;
     emit(state.copyWith(
       isBenchTestMode: nextBenchMode,
-      sceneStatusText: nextBenchMode ? 'BENCH TEST ACTIVE' : 'OPTIMAL',
+      confidenceThreshold: nextBenchMode ? 0.12 : 0.20,
+      sceneStatusText: nextBenchMode ? 'BENCH TEST (GATE: OFF)' : 'OPTIMAL',
     ));
   }
 
@@ -110,14 +108,15 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         gpsData: gpsService.currentGpsData,
         isMuted: _alertManager.isMuted,
         isNativeRustEngine: _rustBridge.isNativeLoaded,
+        lastPipelineError: () => null,
       ));
     } catch (e, st) {
       debugPrint('[DetectionBloc] Initialize error: $e\n$st');
-      // Retain active state with fallback
       emit(state.copyWith(
         isInitialized: true,
         isStreaming: true,
         isNativeRustEngine: _rustBridge.isNativeLoaded,
+        lastPipelineError: () => 'Init: $e',
       ));
     }
   }
@@ -193,7 +192,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         timestampMs: now.millisecondsSinceEpoch,
       );
 
-      final frameBytes = event.image.planes[0].bytes;
+      final frameBytes = event.image.planes.isNotEmpty ? event.image.planes[0].bytes : Uint8List(0);
       final rustResult = await _rustBridge.processFrame(
         frameBytes: frameBytes,
         width: event.image.width,
@@ -330,7 +329,9 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         d10Count: d10,
         d20Count: d20,
         d40Count: d40,
+        frameCount: state.frameCount + 1,
         pendingSyncCount: _rustBridge.getPendingSyncCount(),
+        lastPipelineError: () => null,
       ));
     } catch (e, st) {
       debugPrint('[DetectionBloc] Frame error: $e\n$st');
@@ -339,6 +340,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         inferenceLatencyMs: stopwatch.elapsedMilliseconds > 0 ? stopwatch.elapsedMilliseconds : 16,
         fps: double.parse(currentFps.toStringAsFixed(1)),
         isNativeRustEngine: _rustBridge.isNativeLoaded,
+        frameCount: state.frameCount + 1,
+        lastPipelineError: () => e.toString(),
       ));
     } finally {
       _isProcessingFrame = false;

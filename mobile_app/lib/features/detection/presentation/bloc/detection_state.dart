@@ -30,6 +30,8 @@ class DetectionState extends Equatable {
   final int d20Count;
   final int d40Count;
   final int pendingSyncCount;
+  final int frameCount;
+  final String? lastPipelineError;
   final Failure? failure;
 
   const DetectionState({
@@ -58,6 +60,8 @@ class DetectionState extends Equatable {
     this.d20Count = 0,
     this.d40Count = 0,
     this.pendingSyncCount = 0,
+    this.frameCount = 0,
+    this.lastPipelineError,
     this.failure,
   });
 
@@ -91,6 +95,8 @@ class DetectionState extends Equatable {
       d20Count: 0,
       d40Count: 0,
       pendingSyncCount: 0,
+      frameCount: 0,
+      lastPipelineError: null,
       failure: null,
     );
   }
@@ -121,6 +127,8 @@ class DetectionState extends Equatable {
     int? d20Count,
     int? d40Count,
     int? pendingSyncCount,
+    int? frameCount,
+    String? Function()? lastPipelineError,
     Failure? failure,
   }) {
     return DetectionState(
@@ -149,6 +157,8 @@ class DetectionState extends Equatable {
       d20Count: d20Count ?? this.d20Count,
       d40Count: d40Count ?? this.d40Count,
       pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
+      frameCount: frameCount ?? this.frameCount,
+      lastPipelineError: lastPipelineError != null ? lastPipelineError() : this.lastPipelineError,
       failure: failure ?? this.failure,
     );
   }
@@ -180,6 +190,8 @@ class DetectionState extends Equatable {
         d20Count,
         d40Count,
         pendingSyncCount,
+        frameCount,
+        lastPipelineError,
         failure,
       ];
 }

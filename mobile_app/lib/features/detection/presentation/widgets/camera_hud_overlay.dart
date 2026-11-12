@@ -40,6 +40,10 @@ class CameraHudOverlay extends StatelessWidget {
                 // 1. Top Cyber-Automotive Telemetry Cockpit Card
                 _buildTopCockpitCard(context),
 
+                // Diagnostic Pipeline Error Banner (if error occurred during frame processing)
+                if (state.lastPipelineError != null)
+                  _buildDiagnosticErrorBanner(context),
+
                 const SizedBox(height: 4),
 
                 // 2. Non-Road Surface Alert or Scene Status Chip
@@ -238,14 +242,35 @@ class CameraHudOverlay extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 3),
-                      Text(
-                        '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'monospace',
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: state.frameCount % 2 == 0 ? AppColors.successGps : AppColors.successGps.withValues(alpha: 0.35),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.successGps.withValues(alpha: 0.8),
+                                  blurRadius: 4,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS',
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -316,6 +341,37 @@ class CameraHudOverlay extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDiagnosticErrorBanner(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xE62A0D0D),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.error, width: 1.0),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'PIPELINE WARNING: ${state.lastPipelineError}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFFFB4AB),
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
