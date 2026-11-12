@@ -1,0 +1,27 @@
+{
+  "model_name": "velopath_yolo11n_int8",
+  "version": "2.0.0",
+  "input_shape": [
+    1,
+    640,
+    640,
+    3
+  ],
+  "classes": [
+    "D00",
+    "D10",
+    "D20",
+    "D40"
+  ],
+  "taxonomy": {
+    "D00": "Longitudinal Crack",
+    "D10": "Transverse Crack",
+    "D20": "Alligator Crack",
+    "D40": "Pothole"
+  },
+  "quantization": "INT8 (Per-Channel)",
+  "tflite_sha256": "5e48e596fcc1f1d4bf859ff3275bd1999f7ac405dadc82c15b988ca842ac1465",
+  "onnx_sha256": "b09a66da399013bdc6f7aa7ec50de5a9fc08828170523d97e65e2bc289701c9e",
+  "onnx_path": "yolo11n.onnx",
+  "tflite_path": "yolo11n_int8.tflite"
+}

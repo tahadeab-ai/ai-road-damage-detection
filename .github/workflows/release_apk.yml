@@ -99,7 +99,7 @@ jobs:
       - name: Upload Release APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: velopath-ai-release-apks
+          name: VeloPath-AI-v2.0-Release-APKs
           path: |
             mobile_app/build/app/outputs/flutter-apk/*-release.apk
             mobile_app/build/app/outputs/flutter-apk/*.sha256
