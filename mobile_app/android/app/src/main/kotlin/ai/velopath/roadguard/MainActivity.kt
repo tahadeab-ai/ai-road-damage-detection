@@ -1,4 +1,4 @@
-package com.roadguard.road_guard_mobile
+package ai.velopath.roadguard
 
 import io.flutter.embedding.android.FlutterActivity
 

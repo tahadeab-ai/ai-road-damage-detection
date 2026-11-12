@@ -193,9 +193,14 @@ class VeloPathRustBridge {
       }
 
       if (_dylib != null) {
-        final versionFn = _dylib!.lookupFunction<_VersionNative, _VersionDart>('velopath_engine_version');
-        final ver = versionFn();
-        debugPrint('[VeloPath FFI] Successfully linked native library! Native Engine Version: $ver');
+        try {
+          final versionFn = _dylib!.lookupFunction<_VersionNative, _VersionDart>('velopath_engine_version');
+          final ver = versionFn();
+          debugPrint('[VeloPath FFI] Successfully linked native library! Native Engine Version: $ver');
+        } catch (symErr) {
+          debugPrint('[VeloPath FFI] Symbol lookup notice: $symErr');
+          _isNativeLoaded = false;
+        }
       }
     } catch (e) {
       _isNativeLoaded = false;

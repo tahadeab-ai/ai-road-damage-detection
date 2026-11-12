@@ -20,23 +20,28 @@ pub use types::*;
 // C ABI FFI Symbols for mobile integration
 #[no_mangle]
 pub extern "C" fn velopath_engine_version() -> i32 {
-    200 // v2.0.0
+    std::panic::catch_unwind(|| {
+        200 // v2.0.0
+    }).unwrap_or(200)
 }
 
 #[no_mangle]
 pub extern "C" fn velopath_engine_create() -> *mut VeloPathEngine {
-    match VeloPathEngine::new(None, None) {
-        Ok(engine) => Box::into_raw(Box::new(engine)),
-        Err(_) => std::ptr::null_mut(),
-    }
+    let result = std::panic::catch_unwind(|| {
+        match VeloPathEngine::new(None, None) {
+            Ok(engine) => Box::into_raw(Box::new(engine)),
+            Err(_) => std::ptr::null_mut(),
+        }
+    });
+    result.unwrap_or(std::ptr::null_mut())
 }
 
 #[no_mangle]
 pub extern "C" fn velopath_engine_destroy(ptr: *mut VeloPathEngine) {
     if !ptr.is_null() {
-        unsafe {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
             drop(Box::from_raw(ptr));
-        }
+        }));
     }
 }
 
