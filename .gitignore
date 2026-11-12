@@ -5,6 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
+!mobile_app/android/app/src/main/jniLibs/**/*.so
 
 # Distribution / packaging
 .Python
@@ -83,3 +84,12 @@ checkpoints/
 .coverage
 htmlcov/
 .pytest_cache/
+
+
+# Rust build target
+
+target/
+
+**/target/
+target/
+

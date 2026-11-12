@@ -50,3 +50,11 @@ class ChangeConfidenceThreshold extends DetectionEvent {
 class ToggleMuteAudio extends DetectionEvent {}
 
 class ToggleTorchMode extends DetectionEvent {}
+
+class ToggleBenchTestMode extends DetectionEvent {}
+
+class ToggleRoadGateMode extends DetectionEvent {}
+
+class ToggleLanguageMode extends DetectionEvent {}
+
+class ResetHazardCounters extends DetectionEvent {}

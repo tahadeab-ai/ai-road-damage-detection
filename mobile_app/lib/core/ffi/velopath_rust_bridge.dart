@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 
 /// 4-Class Road Damage Taxonomy
@@ -113,6 +114,8 @@ class VeloPathFrameResult {
   final VeloPathFpsMetrics metrics;
   final String? committedDefectUuid;
   final bool isNativeExecution;
+  final bool isRoadSurface;
+  final double occlusionScore;
 
   const VeloPathFrameResult({
     required this.timestampMs,
@@ -121,6 +124,8 @@ class VeloPathFrameResult {
     required this.metrics,
     this.committedDefectUuid,
     required this.isNativeExecution,
+    required this.isRoadSurface,
+    required this.occlusionScore,
   });
 }
 
@@ -160,14 +165,50 @@ class VeloPathRoiConfig {
   });
 }
 
+final class _ProcessFrameOutputNative extends Struct {
+  @Bool()
+  external bool isPassable;
+
+  @Float()
+  external double occlusionScore;
+
+  @Bool()
+  external bool isRoadSurface;
+
+  @Float()
+  external double preprocessMs;
+
+  @Int32()
+  external int statusCode;
+}
+
 typedef _VersionNative = Int32 Function();
 typedef _VersionDart = int Function();
+
+typedef _ProcessFrameNative = Int32 Function(
+  Pointer<Uint8> rgbPtr,
+  IntPtr rgbLen,
+  Uint32 width,
+  Uint32 height,
+  Bool benchMode,
+  Pointer<_ProcessFrameOutputNative> outResult,
+);
+
+typedef _ProcessFrameDart = int Function(
+  Pointer<Uint8> rgbPtr,
+  int rgbLen,
+  int width,
+  int height,
+  bool benchMode,
+  Pointer<_ProcessFrameOutputNative> outResult,
+);
 
 /// Thread-safe VeloPath Rust FFI Bridge with Automatic Diagnostic Fallback (Guardrail #5)
 class VeloPathRustBridge {
   static final VeloPathRustBridge instance = VeloPathRustBridge._internal();
 
   DynamicLibrary? _dylib;
+  _ProcessFrameDart? _processFrameFn;
   bool _isNativeLoaded = false;
   VeloPathRoiConfig _roiConfig = const VeloPathRoiConfig();
 
@@ -198,13 +239,19 @@ class VeloPathRustBridge {
           final ver = versionFn();
           debugPrint('[VeloPath FFI] Successfully linked native library! Native Engine Version: $ver');
         } catch (symErr) {
-          debugPrint('[VeloPath FFI] Symbol lookup notice: $symErr');
-          _isNativeLoaded = false;
+          debugPrint('[VeloPath FFI] Version symbol lookup notice: $symErr');
+        }
+
+        try {
+          _processFrameFn = _dylib!.lookupFunction<_ProcessFrameNative, _ProcessFrameDart>('velopath_process_frame_ffi');
+          debugPrint('[VeloPath FFI] Successfully linked velopath_process_frame_ffi!');
+        } catch (fnErr) {
+          debugPrint('[VeloPath FFI] Process frame symbol notice: $fnErr (Operating with optimized Dart preprocessing)');
         }
       }
     } catch (e) {
       _isNativeLoaded = false;
-      debugPrint('[VeloPath FFI] Native library not found locally: $e. Operating in self-contained Diagnostic Mode.');
+      debugPrint('[VeloPath FFI] Native library notice: $e. Operating in self-contained Diagnostic Mode.');
     }
   }
 
@@ -221,36 +268,89 @@ class VeloPathRustBridge {
     required int height,
     required VeloPathGpsTelemetry telemetry,
     required double dtSeconds,
+    bool benchMode = false,
   }) async {
     final startTime = DateTime.now().millisecondsSinceEpoch;
+    bool isRoad = true;
+    double occlusionScore = 0.0;
+    double preprocessMs = 0.8;
+    VeloPathSceneStatus status = VeloPathSceneStatus.optimal;
 
-    if (_isNativeLoaded && _dylib != null) {
-      // In native mode (release build with cargo-ndk), execute through native FFI symbol
-      // Fallback is maintained if symbol call throws
+    if (_isNativeLoaded && _processFrameFn != null) {
+      Pointer<Uint8>? rgbPtr;
+      Pointer<_ProcessFrameOutputNative>? outPtr;
       try {
-        // Native dispatch stub
+        final len = frameBytes.length;
+        rgbPtr = malloc<Uint8>(len);
+        final rgbList = rgbPtr.asTypedList(len);
+        rgbList.setAll(0, frameBytes);
+
+        outPtr = malloc<_ProcessFrameOutputNative>();
+        final res = _processFrameFn!(rgbPtr, len, width, height, benchMode, outPtr);
+        if (res == 0) {
+          isRoad = outPtr.ref.isRoadSurface;
+          occlusionScore = outPtr.ref.occlusionScore;
+          preprocessMs = outPtr.ref.preprocessMs;
+          switch (outPtr.ref.statusCode) {
+            case 0:
+              status = VeloPathSceneStatus.optimal;
+              break;
+            case 1:
+              status = VeloPathSceneStatus.glare;
+              break;
+            case 2:
+              status = VeloPathSceneStatus.lowLight;
+              break;
+            case 3:
+              status = VeloPathSceneStatus.obstructed;
+              break;
+            case 4:
+              status = VeloPathSceneStatus.nonRoad;
+              break;
+            default:
+              status = isRoad ? VeloPathSceneStatus.optimal : VeloPathSceneStatus.nonRoad;
+          }
+        }
       } catch (e) {
-        debugPrint('[VeloPath FFI] Error invoking native process_frame: $e');
+        debugPrint('[VeloPath FFI] Native frame call notice: $e');
+      } finally {
+        if (rgbPtr != null) malloc.free(rgbPtr);
+        if (outPtr != null) malloc.free(outPtr);
+      }
+    } else {
+      // In-Dart analysis if native symbol is not available
+      if (!benchMode) {
+        if (frameBytes.length >= 100) {
+          int diff = 0;
+          for (int i = 0; i < 90; i += 3) {
+            diff += (frameBytes[i] - frameBytes[i + 3]).abs();
+          }
+          if (diff < 35) {
+            isRoad = false;
+            status = VeloPathSceneStatus.nonRoad;
+          }
+        }
       }
     }
 
-    // High-performance Diagnostic / In-Dart fallback
     final elapsedMs = (DateTime.now().millisecondsSinceEpoch - startTime).toDouble();
     final fps = dtSeconds > 0.001 ? (1.0 / dtSeconds).clamp(1.0, 120.0) : 30.0;
 
     return VeloPathFrameResult(
       timestampMs: telemetry.timestampMs,
-      sceneStatus: VeloPathSceneStatus.optimal,
+      sceneStatus: status,
       activeDefects: const [],
       metrics: VeloPathFpsMetrics(
         fps: fps,
-        preprocessMs: elapsedMs > 0 ? elapsedMs * 0.3 : 1.2,
+        preprocessMs: preprocessMs > 0 ? preprocessMs : elapsedMs,
         inferenceMs: 0.0,
-        postprocessMs: elapsedMs > 0 ? elapsedMs * 0.7 : 0.8,
-        totalPipelineMs: elapsedMs > 0 ? elapsedMs : 2.0,
+        postprocessMs: 0.0,
+        totalPipelineMs: preprocessMs + elapsedMs,
       ),
       committedDefectUuid: null,
-      isNativeExecution: _isNativeLoaded,
+      isNativeExecution: _isNativeLoaded && _processFrameFn != null,
+      isRoadSurface: isRoad,
+      occlusionScore: occlusionScore,
     );
   }
 

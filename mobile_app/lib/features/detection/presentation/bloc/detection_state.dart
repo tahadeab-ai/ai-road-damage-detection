@@ -22,6 +22,14 @@ class DetectionState extends Equatable {
   final double maxSeverityScore;
   final String sceneStatusText;
   final bool isNativeRustEngine;
+  final bool isBenchTestMode;
+  final bool isRoadGateEnabled;
+  final bool isArabic;
+  final int d00Count;
+  final int d10Count;
+  final int d20Count;
+  final int d40Count;
+  final int pendingSyncCount;
   final Failure? failure;
 
   const DetectionState({
@@ -42,10 +50,19 @@ class DetectionState extends Equatable {
     this.maxSeverityScore = 0.0,
     this.sceneStatusText = 'OPTIMAL',
     this.isNativeRustEngine = false,
+    this.isBenchTestMode = false,
+    this.isRoadGateEnabled = true,
+    this.isArabic = false,
+    this.d00Count = 0,
+    this.d10Count = 0,
+    this.d20Count = 0,
+    this.d40Count = 0,
+    this.pendingSyncCount = 0,
     this.failure,
   });
 
-  bool get isLowSpeed => gpsData.speedKmh < 8.0;
+  bool get isLowSpeed => !isBenchTestMode && gpsData.speedKmh < 8.0;
+  int get totalHazardsCount => d00Count + d10Count + d20Count + d40Count;
 
   factory DetectionState.initial() {
     return const DetectionState(
@@ -57,7 +74,7 @@ class DetectionState extends Equatable {
       fps: 0.0,
       gpsData: GpsData.empty,
       criticalHazardAlert: null,
-      confidenceThreshold: 0.55,
+      confidenceThreshold: 0.50,
       totalLoggedCount: 0,
       isMuted: false,
       isTorchOn: false,
@@ -66,6 +83,14 @@ class DetectionState extends Equatable {
       maxSeverityScore: 0.0,
       sceneStatusText: 'INITIALIZING',
       isNativeRustEngine: false,
+      isBenchTestMode: false,
+      isRoadGateEnabled: true,
+      isArabic: false,
+      d00Count: 0,
+      d10Count: 0,
+      d20Count: 0,
+      d40Count: 0,
+      pendingSyncCount: 0,
       failure: null,
     );
   }
@@ -88,6 +113,14 @@ class DetectionState extends Equatable {
     double? maxSeverityScore,
     String? sceneStatusText,
     bool? isNativeRustEngine,
+    bool? isBenchTestMode,
+    bool? isRoadGateEnabled,
+    bool? isArabic,
+    int? d00Count,
+    int? d10Count,
+    int? d20Count,
+    int? d40Count,
+    int? pendingSyncCount,
     Failure? failure,
   }) {
     return DetectionState(
@@ -108,6 +141,14 @@ class DetectionState extends Equatable {
       maxSeverityScore: maxSeverityScore ?? this.maxSeverityScore,
       sceneStatusText: sceneStatusText ?? this.sceneStatusText,
       isNativeRustEngine: isNativeRustEngine ?? this.isNativeRustEngine,
+      isBenchTestMode: isBenchTestMode ?? this.isBenchTestMode,
+      isRoadGateEnabled: isRoadGateEnabled ?? this.isRoadGateEnabled,
+      isArabic: isArabic ?? this.isArabic,
+      d00Count: d00Count ?? this.d00Count,
+      d10Count: d10Count ?? this.d10Count,
+      d20Count: d20Count ?? this.d20Count,
+      d40Count: d40Count ?? this.d40Count,
+      pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
       failure: failure ?? this.failure,
     );
   }
@@ -131,6 +172,14 @@ class DetectionState extends Equatable {
         maxSeverityScore,
         sceneStatusText,
         isNativeRustEngine,
+        isBenchTestMode,
+        isRoadGateEnabled,
+        isArabic,
+        d00Count,
+        d10Count,
+        d20Count,
+        d40Count,
+        pendingSyncCount,
         failure,
       ];
 }

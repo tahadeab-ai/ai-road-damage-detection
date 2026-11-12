@@ -12,6 +12,8 @@ class CameraHudOverlay extends StatelessWidget {
   final VoidCallback onToggleTorch;
   final VoidCallback onOpenHistory;
   final VoidCallback onOpenAnalytics;
+  final VoidCallback onToggleBenchMode;
+  final VoidCallback onToggleRoadGate;
 
   const CameraHudOverlay({
     super.key,
@@ -21,6 +23,8 @@ class CameraHudOverlay extends StatelessWidget {
     required this.onToggleTorch,
     required this.onOpenHistory,
     required this.onOpenAnalytics,
+    required this.onToggleBenchMode,
+    required this.onToggleRoadGate,
   });
 
   @override
@@ -33,21 +37,30 @@ class CameraHudOverlay extends StatelessWidget {
           child: SafeArea(
             child: Column(
               children: [
-                // 1. Top Automotive Telemetry HUD Header (Overflow-Proof via FittedBox)
-                _buildTopHudBar(context),
+                // 1. Top Cyber-Automotive Telemetry Cockpit Card
+                _buildTopCockpitCard(context),
 
-                // 2. Scene Intelligence Status Chip (V1.1 UI/UX)
-                _buildSceneStatusChip(context),
+                const SizedBox(height: 4),
 
-                // 3. Critical Alert Warning Banner (Confirmed Pothole or Severe Alligator Crack)
-                // Suppressed if off-road to eliminate false alarms
-                if (state.criticalHazardAlert != null && state.isRoadDetected)
+                // 2. Non-Road Surface Alert or Scene Status Chip
+                if (!state.isRoadDetected && !state.isBenchTestMode && state.isRoadGateEnabled)
+                  _buildSurfaceGateAlertBanner(context)
+                else
+                  _buildSceneStatusChip(context),
+
+                // 3. Critical Hazard Alert Banner
+                if (state.criticalHazardAlert != null && (state.isRoadDetected || state.isBenchTestMode))
                   _buildCriticalWarningBanner(context),
 
                 const Spacer(),
 
-                // 3. Bottom HUD Automotive Console
-                _buildBottomControlBar(context),
+                // 4. Bottom Live Diagnostics Strip (Damage Counters & WAL Queue)
+                _buildLiveTelemetryStrip(context),
+
+                const SizedBox(height: 6),
+
+                // 5. Glassmorphic Control Dock
+                _buildBottomControlDock(context),
               ],
             ),
           ),
@@ -56,38 +69,50 @@ class CameraHudOverlay extends StatelessWidget {
     );
   }
 
-  Widget _buildTopHudBar(BuildContext context) {
+  /// 1. Top Telemetry Cockpit Card (Glassmorphic Obsidian #0B0F17 with #00F0FF Neon Cyan border)
+  Widget _buildTopCockpitCard(BuildContext context) {
+    final bool isBench = state.isBenchTestMode;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: AppColors.surfaceGlass,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: AppColors.borderGlow, width: 1.2),
+              color: const Color(0xE60B0F17), // Deep Obsidian Glass
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isBench ? AppColors.laserCyan : AppColors.borderGlow,
+                width: isBench ? 1.5 : 1.2,
+              ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.35),
-                  blurRadius: 16,
+                  color: isBench
+                      ? AppColors.laserCyan.withValues(alpha: 0.25)
+                      : Colors.black.withValues(alpha: 0.45),
+                  blurRadius: 18,
                   offset: const Offset(0, 4),
                 ),
               ],
             ),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.center,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Vehicle Speedometer & Standby Badge
-                  Row(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Left: Digital Speedometer + Mode Toggle Chip
+                Expanded(
+                  flex: 3,
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.speed_rounded, color: AppColors.cyanAccent, size: 20),
+                      // Speedometer Icon & Value
+                      Icon(
+                        Icons.speed_rounded,
+                        color: isBench ? AppColors.warning : AppColors.laserCyan,
+                        size: 20,
+                      ),
                       const SizedBox(width: 4),
                       RichText(
                         text: TextSpan(
@@ -96,163 +121,169 @@ class CameraHudOverlay extends StatelessWidget {
                               text: state.gpsData.speedKmh.toStringAsFixed(0),
                               style: const TextStyle(
                                 color: AppColors.textPrimary,
-                                fontSize: 20,
+                                fontSize: 18,
                                 fontWeight: FontWeight.w900,
                                 fontFamily: 'monospace',
                               ),
                             ),
-                            TextSpan(
-                              text: ' ${AppStrings.speedUnit}',
-                              style: const TextStyle(
+                            const TextSpan(
+                              text: ' KM/H',
+                              style: TextStyle(
                                 color: AppColors.textSecondary,
-                                fontSize: 10,
+                                fontSize: 9,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      if (state.isLowSpeed) ...[
-                        const SizedBox(width: 6),
-                        Tooltip(
-                          message: AppStrings.standbyTooltip,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: AppColors.warning.withValues(alpha: 0.20),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: AppColors.warning, width: 0.8),
+                      const SizedBox(width: 6),
+
+                      // Interactive Mode Toggle Chip: DRIVE vs BENCH TEST
+                      GestureDetector(
+                        onTap: onToggleBenchMode,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: isBench
+                                ? AppColors.laserCyan.withValues(alpha: 0.25)
+                                : (state.isLowSpeed
+                                    ? AppColors.warning.withValues(alpha: 0.20)
+                                    : AppColors.surfaceLight),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isBench
+                                  ? AppColors.laserCyan
+                                  : (state.isLowSpeed ? AppColors.warning : AppColors.border),
+                              width: 1.0,
                             ),
-                            child: Text(
-                              AppStrings.standby,
-                              style: const TextStyle(
-                                color: AppColors.warning,
-                                fontSize: 9,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 5,
+                                height: 5,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isBench
+                                      ? AppColors.laserCyan
+                                      : (state.isLowSpeed ? AppColors.warning : AppColors.successGps),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                isBench
+                                    ? 'BENCH'
+                                    : (state.isLowSpeed ? 'STANDBY' : 'DRIVE'),
+                                style: TextStyle(
+                                  color: isBench
+                                      ? AppColors.laserCyan
+                                      : (state.isLowSpeed ? AppColors.warning : AppColors.textPrimary),
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Center: Live AI Engine Core Badge
+                Expanded(
+                  flex: 4,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF1E2838), Color(0xFF151C28)],
+                          ),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: state.isNativeRustEngine
+                                ? AppColors.laserCyan.withValues(alpha: 0.6)
+                                : AppColors.border,
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.memory_rounded,
+                              size: 11,
+                              color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.warning,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              state.isNativeRustEngine
+                                  ? 'RUST SIMD + YOLO11n'
+                                  : 'DART + YOLO11n INT8',
+                              style: TextStyle(
+                                color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.textPrimary,
+                                fontSize: 8.5,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: 0.4,
                               ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS',
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
                     ],
                   ),
+                ),
 
-                  const SizedBox(width: 10),
-
-                  // Latency & Framerate Telemetry Tag
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppColors.border, width: 0.6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: state.isStreaming ? AppColors.successGps : AppColors.warning,
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          '${state.inferenceLatencyMs}${AppStrings.msUnit} • ${state.fps} ${AppStrings.fpsUnit}',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            fontFamily: 'monospace',
-                          ),
-                        ),
-                        if (state.maxSeverityScore > 0) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: AppColors.d40Pothole.withValues(alpha: 0.25),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: AppColors.d40Pothole, width: 0.5),
-                            ),
-                            child: Text(
-                              'SEV ${state.maxSeverityScore.toStringAsFixed(1)}',
-                              style: const TextStyle(
-                                color: AppColors.d40Pothole,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                                fontFamily: 'monospace',
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  // Controls: Language Switcher, GPS, Incident Count, Audio Mute
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+                // Right: Language Switch & Audio Alert Mute
+                Expanded(
+                  flex: 3,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       // Quick Language Switcher Button (AR / EN)
                       GestureDetector(
                         onTap: () => AppLanguageNotifier.instance.toggleLanguage(),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                           decoration: BoxDecoration(
-                            color: AppColors.cyanAccent.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: AppColors.cyanAccent, width: 1.0),
+                            color: AppColors.laserCyan.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppColors.laserCyan, width: 0.8),
                           ),
                           child: Text(
                             AppStrings.languageToggleLabel,
                             style: const TextStyle(
-                              color: AppColors.cyanAccent,
-                              fontSize: 11,
+                              color: AppColors.laserCyan,
+                              fontSize: 10,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
                       ),
-
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
 
                       // GPS Indicator
                       Icon(
                         state.gpsData.isGpsLocked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
                         color: state.gpsData.isGpsLocked ? AppColors.successGps : AppColors.warning,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 6),
-
-                      // Active Confirmed Hazard Count Badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.d40Pothole.withValues(alpha: 0.22),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: AppColors.d40Pothole, width: 0.8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.warning_amber_rounded, color: AppColors.d40Pothole, size: 12),
-                            const SizedBox(width: 2),
-                            Text(
-                              '${state.trackedDetections.where((t) => t.isConfirmed).length}',
-                              style: const TextStyle(
-                                color: AppColors.d40Pothole,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ],
-                        ),
+                        size: 15,
                       ),
                       const SizedBox(width: 6),
 
@@ -263,107 +294,150 @@ class CameraHudOverlay extends StatelessWidget {
                           padding: const EdgeInsets.all(5),
                           decoration: BoxDecoration(
                             color: state.isMuted
-                                ? Colors.red.withValues(alpha: 0.25)
-                                : Colors.white.withValues(alpha: 0.1),
+                                ? AppColors.error.withValues(alpha: 0.25)
+                                : AppColors.surfaceLight,
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: state.isMuted ? Colors.red : AppColors.border,
-                              width: 1,
+                              color: state.isMuted ? AppColors.error : AppColors.border,
+                              width: 0.8,
                             ),
                           ),
                           child: Icon(
                             state.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                            color: state.isMuted ? Colors.redAccent : AppColors.cyanAccent,
-                            size: 15,
+                            color: state.isMuted ? AppColors.error : AppColors.laserCyan,
+                            size: 14,
                           ),
                         ),
                       ),
                     ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 2. Non-Road Surface Alert Banner (Displayed when surface gate flags laptop, wall, or floor)
+  Widget _buildSurfaceGateAlertBanner(BuildContext context) {
+    return GestureDetector(
+      onTap: onToggleBenchMode,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 4.0),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xCC7F1D1D), // Dark Crimson Glass
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.error, width: 1.2),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.error.withValues(alpha: 0.35),
+                    blurRadius: 12,
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.sensor_occupied_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      AppStrings.isArabic
+                          ? 'بوابة السطح: المشهد غير مطابق للطريق (انقر لتفعيل وضع الفحص)'
+                          : 'SURFACE GATE: NON-ROAD SCENE (TAP FOR BENCH TEST)',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.laserCyan,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'OVERRIDE',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         ),
-      ),
+      ).animate().shake(duration: 400.ms, hz: 3).fadeIn(duration: 200.ms),
     );
   }
 
+  /// Scene Intelligence Status Chip
   Widget _buildSceneStatusChip(BuildContext context) {
-    final bool isRoad = state.isRoadDetected;
     final bool isTracking = state.trackedDetections.any((t) => t.isConfirmed);
-    final bool hasDetections = state.trackedDetections.isNotEmpty;
+    final bool hasDetections = state.detections.isNotEmpty;
 
     String statusText;
     IconData statusIcon;
     Color statusColor;
 
-    if (state.sceneStatusText != 'OPTIMAL' && state.sceneStatusText != 'INITIALIZING') {
-      statusText = state.sceneStatusText;
-      statusIcon = Icons.sensors_off_rounded;
-      statusColor = AppColors.warning;
-    } else if (!isRoad) {
-      statusText = AppStrings.sceneRoadNotDetected;
-      statusIcon = Icons.visibility_off_rounded;
-      statusColor = AppColors.warning;
+    if (state.isBenchTestMode) {
+      statusText = 'BENCH TEST MODE ACTIVE (OVERRIDE)';
+      statusIcon = Icons.science_outlined;
+      statusColor = AppColors.laserCyan;
     } else if (isTracking) {
       statusText = AppStrings.sceneTrackingHazard;
       statusIcon = Icons.track_changes_rounded;
       statusColor = AppColors.d40Pothole;
     } else if (hasDetections) {
-      statusText = AppStrings.sceneHazardDetected;
+      statusText = '${state.detections.length} HAZARD(S) IN VIEW';
       statusIcon = Icons.warning_amber_rounded;
-      statusColor = AppColors.cyanAccent;
+      statusColor = AppColors.warning;
     } else {
-      statusText = AppStrings.sceneRoadDetected;
-      statusIcon = Icons.navigation_rounded;
+      statusText = 'ROAD SURFACE OPTIMAL • SCANNING ACTIVE';
+      statusIcon = Icons.verified_user_outlined;
       statusColor = AppColors.successGps;
     }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.black45,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: statusColor.withValues(alpha: 0.6), width: 1.0),
+              color: const Color(0xB30B0F17),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: statusColor.withValues(alpha: 0.5), width: 1.0),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(statusIcon, color: statusColor, size: 14),
+                Icon(statusIcon, color: statusColor, size: 13),
                 const SizedBox(width: 6),
                 Text(
                   statusText,
                   style: TextStyle(
                     color: statusColor,
-                    fontSize: 11,
+                    fontSize: 9.5,
                     fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
                   ),
                 ),
-                if (!isRoad) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      AppStrings.isArabic ? 'متوقف' : 'PAUSED',
-                      style: const TextStyle(
-                        color: AppColors.warning,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
@@ -372,35 +446,36 @@ class CameraHudOverlay extends StatelessWidget {
     );
   }
 
+  /// Critical Alert Warning Banner
   Widget _buildCriticalWarningBanner(BuildContext context) {
     final alert = state.criticalHazardAlert!;
     final defectName = AppStrings.getDefectName(alert.classId);
     final percent = (alert.confidence * 100).toInt();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 4.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: AppColors.d40Pothole.withValues(alpha: 0.88),
-              borderRadius: BorderRadius.circular(18),
+              color: AppColors.d40Pothole.withValues(alpha: 0.90),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(color: Colors.white, width: 1.5),
               boxShadow: [
                 BoxShadow(
                   color: AppColors.d40Pothole.withValues(alpha: 0.55),
-                  blurRadius: 22,
-                  spreadRadius: 3,
+                  blurRadius: 18,
+                  spreadRadius: 2,
                 ),
               ],
             ),
             child: Row(
               children: [
-                const Icon(Icons.emergency_outlined, color: Colors.white, size: 26),
-                const SizedBox(width: 10),
+                const Icon(Icons.emergency_outlined, color: Colors.white, size: 24),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,7 +484,7 @@ class CameraHudOverlay extends StatelessWidget {
                         AppStrings.criticalHazardTitle,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.95),
-                          fontSize: 10,
+                          fontSize: 9,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 0.6,
                         ),
@@ -419,7 +494,7 @@ class CameraHudOverlay extends StatelessWidget {
                         AppStrings.criticalHazardSubtitle(defectName, percent),
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 14,
+                          fontSize: 13,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -434,57 +509,168 @@ class CameraHudOverlay extends StatelessWidget {
     ).animate().shake(duration: 400.ms, hz: 4).fadeIn(duration: 200.ms);
   }
 
-  Widget _buildBottomControlBar(BuildContext context) {
+  /// 4. Bottom Live Diagnostics Strip (Damage Counters & WAL Queue)
+  Widget _buildLiveTelemetryStrip(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+      padding: const EdgeInsets.symmetric(horizontal: 10.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(16),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: AppColors.surfaceGlass,
-              borderRadius: BorderRadius.circular(28),
+              color: const Color(0xE60B0F17),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border, width: 0.8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // 4 Defect Counters
+                _buildClassCounterChip('D00', state.d00Count, AppColors.d00Longitudinal),
+                _buildClassCounterChip('D10', state.d10Count, AppColors.d10Transverse),
+                _buildClassCounterChip('D20', state.d20Count, AppColors.d20Alligator),
+                _buildClassCounterChip('D40', state.d40Count, AppColors.d40Pothole),
+
+                // Peak Severity Gauge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: state.maxSeverityScore > 6.0
+                        ? AppColors.d40Pothole.withValues(alpha: 0.25)
+                        : AppColors.surfaceLight,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: state.maxSeverityScore > 6.0 ? AppColors.d40Pothole : AppColors.border,
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    'SEV ${state.maxSeverityScore.toStringAsFixed(1)}',
+                    style: TextStyle(
+                      color: state.maxSeverityScore > 6.0 ? AppColors.d40Pothole : AppColors.laserCyan,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+
+                // SQLite WAL Queue Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: state.pendingSyncCount > 0
+                        ? AppColors.warning.withValues(alpha: 0.2)
+                        : AppColors.successGps.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: state.pendingSyncCount > 0 ? AppColors.warning : AppColors.successGps,
+                      width: 0.6,
+                    ),
+                  ),
+                  child: Text(
+                    state.pendingSyncCount == 0 ? 'WAL: OK' : 'WAL: ${state.pendingSyncCount}',
+                    style: TextStyle(
+                      color: state.pendingSyncCount > 0 ? AppColors.warning : AppColors.successGps,
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClassCounterChip(String code, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            code,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 3),
+          Text(
+            '$count',
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 5. Bottom Glassmorphic Control Dock
+  Widget _buildBottomControlDock(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xE60B0F17),
+              borderRadius: BorderRadius.circular(24),
               border: Border.all(color: AppColors.border, width: 1),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                // Incident Log Navigation
-                IconButton(
-                  icon: const Icon(Icons.history_rounded, color: AppColors.textPrimary, size: 24),
-                  tooltip: AppStrings.incidentLogs,
-                  onPressed: onOpenHistory,
+                // 1. Incident Log History Button
+                _buildDockButton(
+                  icon: Icons.history_rounded,
+                  label: AppStrings.isArabic ? 'السجل' : 'History',
+                  onTap: onOpenHistory,
                 ),
 
-                // Flashlight / Night Torch Toggle
-                IconButton(
-                  icon: Icon(
-                    state.isTorchOn ? Icons.flashlight_on_rounded : Icons.flashlight_off_rounded,
-                    color: state.isTorchOn ? AppColors.warning : AppColors.textSecondary,
-                    size: 24,
-                  ),
-                  tooltip: AppStrings.nightVision,
-                  onPressed: onToggleTorch,
+                // 2. Road ROI / Surface Gate Toggle Button
+                _buildDockButton(
+                  icon: state.isRoadGateEnabled ? Icons.fence_rounded : Icons.crop_free_rounded,
+                  label: state.isRoadGateEnabled ? 'Gate: ON' : 'Gate: OFF',
+                  color: state.isRoadGateEnabled ? AppColors.laserCyan : AppColors.warning,
+                  onTap: onToggleRoadGate,
                 ),
 
-                // Main Vision Stream Action Button
+                // 3. Central AI Vision Stream Toggle Action
                 GestureDetector(
                   onTap: onToggleStreaming,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: state.isStreaming
                             ? [const Color(0xFFEF4444), const Color(0xFFB91C1C)]
-                            : [AppColors.cyanAccent, const Color(0xFF00B0FF)],
+                            : [AppColors.laserCyan, const Color(0xFF0090FF)],
                       ),
-                      borderRadius: BorderRadius.circular(30),
+                      borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
-                          color: (state.isStreaming ? Colors.red : AppColors.cyanAccent).withValues(alpha: 0.45),
-                          blurRadius: 16,
+                          color: (state.isStreaming ? Colors.red : AppColors.laserCyan).withValues(alpha: 0.40),
+                          blurRadius: 14,
                           spreadRadius: 1,
                         ),
                       ],
@@ -495,14 +681,14 @@ class CameraHudOverlay extends StatelessWidget {
                         Icon(
                           state.isStreaming ? Icons.pause_rounded : Icons.play_arrow_rounded,
                           color: state.isStreaming ? Colors.white : Colors.black,
-                          size: 19,
+                          size: 18,
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
                         Text(
-                          state.isStreaming ? AppStrings.pauseAi : AppStrings.resumeAi,
+                          state.isStreaming ? 'SCANNING' : 'RESUME',
                           style: TextStyle(
                             color: state.isStreaming ? Colors.white : Colors.black,
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 0.5,
                           ),
@@ -512,16 +698,51 @@ class CameraHudOverlay extends StatelessWidget {
                   ),
                 ),
 
-                // Analytics & Device Diagnostics
-                IconButton(
-                  icon: const Icon(Icons.analytics_outlined, color: AppColors.textPrimary, size: 24),
-                  tooltip: AppStrings.diagnostics,
-                  onPressed: onOpenAnalytics,
+                // 4. Night Vision Torch Toggle Button
+                _buildDockButton(
+                  icon: state.isTorchOn ? Icons.flashlight_on_rounded : Icons.flashlight_off_rounded,
+                  label: AppStrings.isArabic ? 'كشاف' : 'Torch',
+                  color: state.isTorchOn ? AppColors.warning : AppColors.textSecondary,
+                  onTap: onToggleTorch,
+                ),
+
+                // 5. Diagnostics & Analytics Dashboard Button
+                _buildDockButton(
+                  icon: Icons.analytics_outlined,
+                  label: AppStrings.isArabic ? 'تحليلات' : 'Analytics',
+                  onTap: onOpenAnalytics,
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDockButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color color = AppColors.textPrimary,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 21),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }

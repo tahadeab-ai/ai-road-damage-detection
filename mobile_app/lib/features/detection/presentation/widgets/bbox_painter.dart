@@ -62,31 +62,47 @@ class BBoxOverlayPainter extends CustomPainter {
     final roiY = _mapY(roadRoiTop, size);
     if (roiY < 0 || roiY > size.height) return;
 
-    final linePaint = Paint()
-      ..color = AppColors.cyanAccent.withValues(alpha: 0.18)
-      ..strokeWidth = 1.0
+    // 1. AR Perspective Road-Scanning Trapezoid
+    final trapezoidPath = Path()
+      ..moveTo(size.width * 0.22, roiY)
+      ..lineTo(size.width * 0.78, roiY)
+      ..lineTo(size.width * 0.96, size.height * 0.92)
+      ..lineTo(size.width * 0.04, size.height * 0.92)
+      ..close();
+
+    // Subtle holographic cyan fill
+    final gridFillPaint = Paint()
+      ..color = AppColors.laserCyan.withValues(alpha: 0.03)
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(trapezoidPath, gridFillPaint);
+
+    // Glowing boundary outline
+    final gridOutlinePaint = Paint()
+      ..color = AppColors.laserCyan.withValues(alpha: 0.22)
+      ..strokeWidth = 1.2
       ..style = PaintingStyle.stroke;
+    canvas.drawPath(trapezoidPath, gridOutlinePaint);
 
-    // Dashed guide line
-    const dashWidth = 8.0;
-    const dashSpace = 8.0;
-    double startX = 24.0;
-    final endX = size.width - 24.0;
-
-    while (startX < endX) {
-      canvas.drawLine(
-        Offset(startX, roiY),
-        Offset(min(startX + dashWidth, endX), roiY),
-        linePaint,
-      );
-      startX += dashWidth + dashSpace;
-    }
-
-    // Edge HUD tick marks
-    final tickPaint = Paint()
-      ..color = AppColors.cyanAccent.withValues(alpha: 0.35)
+    // Dynamic scanning laser bar
+    final scanY = roiY + (size.height * 0.92 - roiY) * (animationValue % 1.0);
+    final scanLaserPaint = Paint()
+      ..shader = LinearGradient(
+        colors: [
+          Colors.transparent,
+          AppColors.laserCyan.withValues(alpha: 0.35),
+          AppColors.laserCyan.withValues(alpha: 0.75),
+          AppColors.laserCyan.withValues(alpha: 0.35),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.2, 0.5, 0.8, 1.0],
+      ).createShader(Rect.fromLTWH(0, scanY - 2, size.width, 4))
       ..strokeWidth = 2.0;
+    canvas.drawLine(Offset(size.width * 0.1, scanY), Offset(size.width * 0.9, scanY), scanLaserPaint);
 
+    // Perspective guidance ticks
+    final tickPaint = Paint()
+      ..color = AppColors.laserCyan.withValues(alpha: 0.5)
+      ..strokeWidth = 2.0;
     canvas.drawLine(Offset(16, roiY - 6), Offset(16, roiY + 6), tickPaint);
     canvas.drawLine(Offset(size.width - 16, roiY - 6), Offset(size.width - 16, roiY + 6), tickPaint);
   }
@@ -219,9 +235,11 @@ class BBoxOverlayPainter extends CustomPainter {
       );
     }
 
-    // 5. Draw Localized Badge Tag with Track ID & Explicit Percentage (e.g. "#001 حفرة 84%")
-    final String badgeText = AppStrings.getDefectBadge(track.classId, track.confidence);
-    final String labelText = '${track.formattedTrackId} $badgeText';
+    // 5. Draw Localized Cyber HUD Badge Tag with Class Code, Track ID, Confidence, & Severity
+    final String classCode = track.classId == 3 ? '[D40]' : (track.classId == 2 ? '[D20]' : (track.classId == 1 ? '[D10]' : '[D00]'));
+    final double severity = (track.classId == 3 ? 9.0 : (track.classId == 2 ? 7.0 : (track.classId == 1 ? 4.5 : 3.5))) * track.confidence;
+    final String badgeText = AppStrings.getDefectName(track.classId);
+    final String labelText = '$classCode $badgeText ${(track.confidence * 100).toInt()}% • SEV ${severity.toStringAsFixed(1)}';
     _drawBadge(
       canvas,
       labelText,
@@ -240,7 +258,9 @@ class BBoxOverlayPainter extends CustomPainter {
       ..strokeWidth = 2.0;
     canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(8)), borderPaint);
 
-    final String labelText = AppStrings.getDefectBadge(det.classId, det.confidence);
+    final String classCode = det.classId == 3 ? '[D40]' : (det.classId == 2 ? '[D20]' : (det.classId == 1 ? '[D10]' : '[D00]'));
+    final double severity = (det.classId == 3 ? 9.0 : (det.classId == 2 ? 7.0 : (det.classId == 1 ? 4.5 : 3.5))) * det.confidence;
+    final String labelText = '$classCode ${AppStrings.getDefectName(det.classId)} ${(det.confidence * 100).toInt()}% • SEV ${severity.toStringAsFixed(1)}';
     _drawBadge(canvas, labelText, rect.topLeft, defectColor);
   }
 

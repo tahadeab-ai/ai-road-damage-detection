@@ -21,8 +21,145 @@ pub use types::*;
 #[no_mangle]
 pub extern "C" fn velopath_engine_version() -> i32 {
     std::panic::catch_unwind(|| {
-        200 // v2.0.0
-    }).unwrap_or(200)
+        210 // v2.1.0
+    }).unwrap_or(210)
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessFrameOutput {
+    pub is_passable: bool,
+    pub occlusion_score: f32,
+    pub is_road_surface: bool,
+    pub preprocess_ms: f32,
+    pub status_code: i32, // 0 = Optimal, 1 = Glare, 2 = Darkness, 3 = Obstructed, 4 = NonRoad
+}
+
+#[no_mangle]
+pub extern "C" fn velopath_process_frame_ffi(
+    rgb_ptr: *const u8,
+    rgb_len: usize,
+    width: u32,
+    height: u32,
+    bench_mode: bool,
+    out_result: *mut ProcessFrameOutput,
+) -> i32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if rgb_ptr.is_null() || out_result.is_null() || width == 0 || height == 0 || rgb_len == 0 {
+            return -1;
+        }
+
+        let start_time = std::time::Instant::now();
+        let buffer = unsafe { std::slice::from_raw_parts(rgb_ptr, rgb_len) };
+
+        if bench_mode {
+            let elapsed_ms = start_time.elapsed().as_secs_f32() * 1000.0;
+            unsafe {
+                *out_result = ProcessFrameOutput {
+                    is_passable: true,
+                    occlusion_score: 0.0,
+                    is_road_surface: true,
+                    preprocess_ms: elapsed_ms.max(0.1),
+                    status_code: 0,
+                };
+            }
+            return 0;
+        }
+
+        // 1. Analyze 32x32 spatial occlusion and glare
+        let scene_health = analyze_scene_health(buffer, width, height);
+
+        // 2. Texture & road surface variance check on lower 60% of frame
+        let mut is_road = scene_health.is_passable();
+        let mut status_code = match scene_health {
+            SceneHealthStatus::Optimal => 0,
+            SceneHealthStatus::SevereGlare => 1,
+            SceneHealthStatus::LowLightDark => 2,
+            SceneHealthStatus::CameraObstructed => 3,
+            SceneHealthStatus::NonRoadSurface => 4,
+        };
+
+        let mut occlusion_score = if scene_health.is_passable() { 0.0 } else { 0.85 };
+
+        if is_road && buffer.len() >= (width * height * 3) as usize {
+            // Sample lower road ROI for pavement surface micro-texture
+            let start_y = (height as usize * 4) / 10;
+            let end_y = (height as usize * 9) / 10;
+            let step = 8;
+            let mut diff_sum = 0.0f32;
+            let mut sample_count = 0usize;
+
+            for y in (start_y..end_y).step_by(step) {
+                let row_offset = y * (width as usize) * 3;
+                for x in (10..(width as usize).saturating_sub(10)).step_by(step) {
+                    let idx = row_offset + x * 3;
+                    if idx + 5 < buffer.len() {
+                        let lum1 = 0.299 * buffer[idx] as f32 + 0.587 * buffer[idx + 1] as f32 + 0.114 * buffer[idx + 2] as f32;
+                        let lum2 = 0.299 * buffer[idx + 3] as f32 + 0.587 * buffer[idx + 4] as f32 + 0.114 * buffer[idx + 5] as f32;
+                        diff_sum += (lum1 - lum2).abs();
+                        sample_count += 1;
+                    }
+                }
+            }
+
+            if sample_count > 0 {
+                let avg_edge = diff_sum / (sample_count as f32);
+                if avg_edge < 1.2 {
+                    is_road = false;
+                    status_code = 4; // Non-road surface detected
+                    occlusion_score = 0.45;
+                }
+            }
+        }
+
+        let elapsed_ms = start_time.elapsed().as_secs_f32() * 1000.0;
+
+        unsafe {
+            *out_result = ProcessFrameOutput {
+                is_passable: is_road,
+                occlusion_score,
+                is_road_surface: is_road,
+                preprocess_ms: elapsed_ms.max(0.1),
+                status_code,
+            };
+        }
+
+        0
+    }));
+
+    result.unwrap_or(-2)
+}
+
+#[no_mangle]
+pub extern "C" fn velopath_yuv_to_rgb_ffi(
+    y_ptr: *const u8,
+    y_len: usize,
+    uv_ptr: *const u8,
+    uv_len: usize,
+    width: u32,
+    height: u32,
+    is_nv21: bool,
+    out_rgb_ptr: *mut u8,
+    out_rgb_len: usize,
+) -> i32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if y_ptr.is_null() || uv_ptr.is_null() || out_rgb_ptr.is_null() || width == 0 || height == 0 {
+            return -1;
+        }
+        let expected_rgb_len = (width * height * 3) as usize;
+        if out_rgb_len < expected_rgb_len || y_len < (width * height) as usize {
+            return -2;
+        }
+
+        let y_plane = unsafe { std::slice::from_raw_parts(y_ptr, y_len) };
+        let uv_plane = unsafe { std::slice::from_raw_parts(uv_ptr, uv_len) };
+        let out_rgb = unsafe { std::slice::from_raw_parts_mut(out_rgb_ptr, out_rgb_len) };
+
+        yuv420_to_rgb(y_plane, uv_plane, width as usize, height as usize, is_nv21, out_rgb);
+        0
+    }));
+
+    result.unwrap_or(-3)
 }
 
 #[no_mangle]
@@ -82,6 +219,27 @@ mod tests {
 
         let gate = InversePerspectiveMapper::association_gate_distance(y);
         assert!(gate >= 0.90 && gate <= 2.50);
+    }
+
+    #[test]
+    fn test_velopath_process_frame_ffi() {
+        assert_eq!(velopath_engine_version(), 210);
+
+        let rgb = vec![128u8; 64 * 64 * 3];
+        let mut out = ProcessFrameOutput {
+            is_passable: false,
+            occlusion_score: 1.0,
+            is_road_surface: false,
+            preprocess_ms: 0.0,
+            status_code: -1,
+        };
+
+        // Test bench mode override
+        let rc = velopath_process_frame_ffi(rgb.as_ptr(), rgb.len(), 64, 64, true, &mut out);
+        assert_eq!(rc, 0);
+        assert!(out.is_passable);
+        assert!(out.is_road_surface);
+        assert_eq!(out.status_code, 0);
     }
 
     #[test]

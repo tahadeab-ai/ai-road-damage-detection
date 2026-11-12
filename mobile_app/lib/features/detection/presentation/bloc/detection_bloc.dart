@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/ffi/velopath_rust_bridge.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
@@ -43,6 +42,47 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     on<ChangeConfidenceThreshold>(_onChangeConfidenceThreshold);
     on<ToggleMuteAudio>(_onToggleMute);
     on<ToggleTorchMode>(_onToggleTorch);
+    on<ToggleBenchTestMode>(_onToggleBenchTest);
+    on<ToggleRoadGateMode>(_onToggleRoadGate);
+    on<ToggleLanguageMode>(_onToggleLanguage);
+    on<ResetHazardCounters>(_onResetCounters);
+  }
+
+  void _onToggleBenchTest(
+    ToggleBenchTestMode event,
+    Emitter<DetectionState> emit,
+  ) {
+    final nextBenchMode = !state.isBenchTestMode;
+    emit(state.copyWith(
+      isBenchTestMode: nextBenchMode,
+      sceneStatusText: nextBenchMode ? 'BENCH TEST ACTIVE' : 'OPTIMAL',
+    ));
+  }
+
+  void _onToggleRoadGate(
+    ToggleRoadGateMode event,
+    Emitter<DetectionState> emit,
+  ) {
+    emit(state.copyWith(isRoadGateEnabled: !state.isRoadGateEnabled));
+  }
+
+  void _onToggleLanguage(
+    ToggleLanguageMode event,
+    Emitter<DetectionState> emit,
+  ) {
+    emit(state.copyWith(isArabic: !state.isArabic));
+  }
+
+  void _onResetCounters(
+    ResetHazardCounters event,
+    Emitter<DetectionState> emit,
+  ) {
+    emit(state.copyWith(
+      d00Count: 0,
+      d10Count: 0,
+      d20Count: 0,
+      d40Count: 0,
+    ));
   }
 
   Future<void> _onInitialize(
@@ -152,48 +192,51 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         height: event.image.height,
         telemetry: telemetry,
         dtSeconds: deltaSec > 0.001 ? deltaSec : 0.033,
+        benchMode: state.isBenchTestMode || !state.isRoadGateEnabled,
       );
 
-      // 3. Fallback to local on-device pipeline if native Rust .so is not compiled locally
-      final bool isRoad;
+      // 3. Surface Gate & YOLO11n INT8 Inference Pipeline
+      final bool isRoad = state.isBenchTestMode || !state.isRoadGateEnabled || rustResult.isRoadSurface;
       List<DetectionResult> rawDetections = [];
       double maxSeverity = 0.0;
-      String statusText = rustResult.sceneStatus.code;
+      String statusText = state.isBenchTestMode ? 'BENCH TEST' : rustResult.sceneStatus.code;
 
-      if (rustResult.isNativeExecution && rustResult.sceneStatus == VeloPathSceneStatus.optimal) {
-        isRoad = true;
-        // Map native Rust detections
-        rawDetections = rustResult.activeDefects.map((d) {
-          if (d.severityScore > maxSeverity) maxSeverity = d.severityScore;
-          return DetectionResult(
-            classId: d.defectClass.index,
-            className: d.defectClass.displayName,
-            confidence: d.confidence,
-            normalizedRect: Rect.fromLTRB(d.bbox.xmin, d.bbox.ymin, d.bbox.xmax, d.bbox.ymax),
-          );
-        }).toList();
+      if (!isRoad) {
+        statusText = 'SURFACE GATE: NON-ROAD SCENE';
+        rawDetections = [];
       } else {
-        // Fallback to local TFLite detector
-        isRoad = await tfliteEngine.checkRoadSurface(float32Buffer);
-        if (isRoad) {
-          rawDetections = await tfliteEngine.runInference(
-            float32Buffer,
-            confThreshold: state.confidenceThreshold,
-            iouThreshold: 0.35,
-            roadRoiTop: 0.25, // Synchronized with Guardrail #3 ROI crop
-          );
-          for (final d in rawDetections) {
-            final sev = (d.classId == 3 ? 9.0 : 4.0) * d.confidence;
-            if (sev > maxSeverity) maxSeverity = sev;
+        // Run real YOLO11n INT8 neural inference
+        rawDetections = await tfliteEngine.runInference(
+          float32Buffer,
+          confThreshold: state.confidenceThreshold,
+          iouThreshold: 0.35,
+          roadRoiTop: state.isBenchTestMode ? 0.0 : 0.25,
+          benchMode: state.isBenchTestMode,
+        );
+
+        for (final d in rawDetections) {
+          double sev = 3.0;
+          switch (d.classId) {
+            case 0: // D00 Longitudinal
+              sev = 2.0 + 2.0 * d.confidence;
+              break;
+            case 1: // D10 Transverse
+              sev = 3.0 + 2.0 * d.confidence;
+              break;
+            case 2: // D20 Alligator
+              sev = 5.0 + 3.0 * d.confidence;
+              break;
+            case 3: // D40 Pothole
+              sev = 7.0 + 3.0 * d.confidence;
+              break;
           }
-        } else {
-          statusText = 'NON-ROAD SURFACE';
+          if (sev > maxSeverity) maxSeverity = sev;
         }
       }
 
       stopwatch.stop();
       final latencyMs = stopwatch.elapsedMilliseconds;
-      final double fps = deltaSec > 0.0 ? (1.0 / deltaSec).clamp(0.0, 120.0) : 0.0;
+      final double fps = deltaSec > 0.005 ? (1.0 / deltaSec).clamp(1.0, 120.0) : 30.0;
 
       // 4. Temporal Tracking & Coordinate EMA Smoothing with Persistent Spatial Lock
       final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
@@ -201,7 +244,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       // 5. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
       await _alertManager.evaluateAlerts(
         detections: trackedList,
-        currentSpeedKmh: state.gpsData.speedKmh,
+        currentSpeedKmh: state.isBenchTestMode ? 45.0 : state.gpsData.speedKmh,
         timestamp: now,
       );
 
@@ -210,6 +253,28 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final criticalTracked = trackedList.where((t) => t.isCritical).toList();
       if (criticalTracked.isNotEmpty) {
         criticalAlert = criticalTracked.first.toDetectionResult();
+      }
+
+      // Update defect class cumulative counts
+      int d00 = state.d00Count;
+      int d10 = state.d10Count;
+      int d20 = state.d20Count;
+      int d40 = state.d40Count;
+      for (final d in rawDetections) {
+        switch (d.classId) {
+          case 0:
+            d00++;
+            break;
+          case 1:
+            d10++;
+            break;
+          case 2:
+            d20++;
+            break;
+          case 3:
+            d40++;
+            break;
+        }
       }
 
       // 7. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
@@ -253,6 +318,11 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         maxSeverityScore: maxSeverity,
         sceneStatusText: statusText,
         isNativeRustEngine: rustResult.isNativeExecution,
+        d00Count: d00,
+        d10Count: d10,
+        d20Count: d20,
+        d40Count: d40,
+        pendingSyncCount: _rustBridge.getPendingSyncCount(),
       ));
     } catch (_) {
       // Avoid crashing live video loop on corrupted single frame

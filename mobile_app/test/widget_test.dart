@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:road_guard_mobile/core/constants/app_theme.dart';
 import 'package:road_guard_mobile/core/constants/colors.dart';
-import 'package:road_guard_mobile/core/localization/app_localizations.dart';
 import 'package:road_guard_mobile/core/utils/temporal_filter.dart';
 import 'package:road_guard_mobile/features/detection/presentation/bloc/detection_state.dart';
 import 'package:road_guard_mobile/features/detection/presentation/widgets/bbox_painter.dart';
@@ -36,6 +35,8 @@ void main() {
               onToggleTorch: () {},
               onOpenHistory: () {},
               onOpenAnalytics: () {},
+              onToggleBenchMode: () {},
+              onToggleRoadGate: () {},
             ),
           ),
         ),
@@ -43,15 +44,15 @@ void main() {
 
       // Verify speedometer is rendered
       expect(
-        find.byWidgetPredicate((w) => w is RichText && w.text.toPlainText().contains('58 ${AppStrings.speedUnit}')),
+        find.byWidgetPredicate((w) => w is RichText && w.text.toPlainText().contains('58 KM/H')),
         findsOneWidget,
       );
 
       // Verify inference latency HUD
-      expect(find.text('14${AppStrings.msUnit} • 22.5 ${AppStrings.fpsUnit}'), findsOneWidget);
+      expect(find.text('14ms • 22.5 FPS'), findsOneWidget);
 
       // Verify AI action button
-      expect(find.text(AppStrings.pauseAi), findsOneWidget);
+      expect(find.text('SCANNING'), findsOneWidget);
     });
 
     test('BBoxOverlayPainter calculates correct pixel mapping across aspect ratios', () {

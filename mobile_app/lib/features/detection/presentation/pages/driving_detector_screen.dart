@@ -12,6 +12,7 @@ import '../bloc/detection_state.dart';
 import '../widgets/bbox_painter.dart';
 import '../widgets/camera_hud_overlay.dart';
 import '../../../history/presentation/pages/hazard_log_screen.dart';
+import '../../../analytics/presentation/screens/statistics_screen.dart';
 
 class DrivingDetectorScreen extends StatefulWidget {
   const DrivingDetectorScreen({super.key});
@@ -247,8 +248,8 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
                             fallbackDetections: state.isStreaming ? state.detections : [],
                             animationValue: _animController.value,
                             cameraAspectRatio: previewAspect,
-                            roadRoiTop: 0.35,
-                            isRoadDetected: state.isRoadDetected,
+                            roadRoiTop: state.isBenchTestMode ? 0.0 : 0.25,
+                            isRoadDetected: state.isRoadDetected || state.isBenchTestMode || !state.isRoadGateEnabled,
                           ),
                         );
                       },
@@ -268,6 +269,12 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
                       onToggleTorch: () {
                         context.read<DetectionBloc>().add(ToggleTorchMode());
                       },
+                      onToggleBenchMode: () {
+                        context.read<DetectionBloc>().add(ToggleBenchTestMode());
+                      },
+                      onToggleRoadGate: () {
+                        context.read<DetectionBloc>().add(ToggleRoadGateMode());
+                      },
                       onOpenHistory: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
@@ -275,7 +282,13 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
                           ),
                         );
                       },
-                      onOpenAnalytics: () => _showAnalyticsBottomSheet(context, state),
+                      onOpenAnalytics: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => StatisticsScreen(state: state),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 );
@@ -424,92 +437,6 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showAnalyticsBottomSheet(BuildContext context, DetectionState state) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) {
-        return Directionality(
-          textDirection: AppStrings.direction,
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      AppStrings.diagnostics,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.5),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-                const Divider(height: 24),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'تسريع المعالجة' : 'Runtime Acceleration',
-                  'Android NNAPI (GPU Delegate)',
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'أبعاد مصفوفة الإدخال' : 'Input Tensor Shape',
-                  '[1, 640, 640, 3] Float32',
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'زمن الاستجابة' : 'Inference Latency',
-                  '${state.inferenceLatencyMs} ${AppStrings.msUnit}',
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'معدل الإطارات' : 'Framerate Output',
-                  '${state.fps} ${AppStrings.fpsUnit}',
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'المسارات النشطة المؤكدة' : 'Confirmed Active Tracks',
-                  '${state.trackedDetections.where((t) => t.isConfirmed).length}',
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'حالة الحركة' : 'Vehicle Movement Gate',
-                  state.isLowSpeed
-                      ? AppStrings.standby
-                      : (AppStrings.isArabic ? 'مراقبة نشطة' : 'ACTIVE MONITORING'),
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'إجمالي الأضرار المسجلة' : 'Total Logged Hazards',
-                  '${state.totalLoggedCount}',
-                ),
-                _buildMetricTile(
-                  AppStrings.isArabic ? 'الموقع الحالي' : 'Active Location',
-                  state.gpsData.address,
-                ),
-                const SizedBox(height: 16),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMetricTile(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-          Text(value, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 13)),
-        ],
       ),
     );
   }
