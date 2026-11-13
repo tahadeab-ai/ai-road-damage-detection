@@ -39,19 +39,28 @@ class GpsService {
   DateTime _lastGeocodingTime = DateTime.fromMillisecondsSinceEpoch(0);
   String _cachedAddress = 'Locating Roadway...';
 
-  /// Initializes location stream with foreground permissions check.
+  /// Initializes location stream with non-blocking foreground permissions check and fast fallback.
   Future<void> initialize() async {
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled().timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => false,
+      );
       if (!serviceEnabled) {
         _updateGpsData(GpsData.empty);
         return;
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
+      LocationPermission permission = await Geolocator.checkPermission().timeout(
+        const Duration(seconds: 1),
+        onTimeout: () => LocationPermission.denied,
+      );
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => LocationPermission.denied,
+        );
+        if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
           _updateGpsData(GpsData.empty);
           return;
         }
@@ -61,6 +70,23 @@ class GpsService {
         _updateGpsData(GpsData.empty);
         return;
       }
+
+      // Fast check for last known cached position without waiting for satellite lock
+      try {
+        final lastPos = await Geolocator.getLastKnownPosition().timeout(
+          const Duration(seconds: 1),
+          onTimeout: () => null,
+        );
+        if (lastPos != null) {
+          _updateGpsData(GpsData(
+            latitude: lastPos.latitude,
+            longitude: lastPos.longitude,
+            speedKmh: lastPos.speed > 0 ? (lastPos.speed * 3.6) : 0.0,
+            address: '${lastPos.latitude.toStringAsFixed(4)}°N, ${lastPos.longitude.toStringAsFixed(4)}°E',
+            isGpsLocked: true,
+          ));
+        }
+      } catch (_) {}
 
       // Subscribe to position updates
       const locationSettings = LocationSettings(

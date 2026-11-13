@@ -24,6 +24,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
 
   StreamSubscription<GpsData>? _gpsSubscription;
   bool _isProcessingFrame = false;
+  bool _isInitializing = false;
   DateTime _lastFrameTime = DateTime.now();
 
   bool get isProcessingFrame => _isProcessingFrame;
@@ -88,26 +89,48 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     InitializeDetectionSystem event,
     Emitter<DetectionState> emit,
   ) async {
+    if (_isInitializing || state.isInitialized) return;
+    _isInitializing = true;
     try {
-      await _rustBridge.initialize();
+      // 1. Await ONLY TFLite engine initialization (local asset load, < 50ms)
       await tfliteEngine.initialize();
-      await hazardRepository.initialize();
-      await gpsService.initialize();
 
+      // 2. Non-blocking background Rust Bridge initialization
+      unawaited(_rustBridge.initialize().catchError((e) {
+        debugPrint('[DetectionBloc] Rust init notice: $e');
+        return false;
+      }));
+
+      // 3. Non-blocking background Hazard repository initialization
+      unawaited(hazardRepository.initialize().then((_) {
+        if (!isClosed) {
+          add(UpdateTelemetryData(state.gpsData));
+        }
+      }).catchError((e) {
+        debugPrint('[DetectionBloc] Hazard repo init notice: $e');
+      }));
+
+      // 4. Non-blocking background GPS service initialization & stream subscription
       _gpsSubscription?.cancel();
       _gpsSubscription = gpsService.gpsStream.listen((gpsData) {
-        add(UpdateTelemetryData(gpsData));
+        if (!isClosed) {
+          add(UpdateTelemetryData(gpsData));
+        }
       });
-
-      final totalLogged = hazardRepository.getAllHazards().length;
+      unawaited(gpsService.initialize().catchError((e) {
+        debugPrint('[DetectionBloc] GPS init notice: $e');
+      }));
 
       emit(state.copyWith(
         isInitialized: true,
         isStreaming: true,
-        totalLoggedCount: totalLogged,
+        isBenchTestMode: true,
+        confidenceThreshold: 0.15,
+        totalLoggedCount: 0,
         gpsData: gpsService.currentGpsData,
         isMuted: _alertManager.isMuted,
         isNativeRustEngine: _rustBridge.isNativeLoaded,
+        sceneStatusText: 'BENCH TEST',
         lastPipelineError: () => null,
       ));
     } catch (e, st) {
@@ -118,6 +141,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         isNativeRustEngine: _rustBridge.isNativeLoaded,
         lastPipelineError: () => 'Init: $e',
       ));
+    } finally {
+      _isInitializing = false;
     }
   }
 
@@ -184,88 +209,55 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       if (!tfliteEngine.isInitialized) {
         await tfliteEngine.initialize();
       }
-      if (!_rustBridge.isNativeLoaded) {
-        await _rustBridge.initialize();
-      }
 
-      // 1. Process camera image bytes into normalized tensor buffer
+      // 1. Process camera image bytes into normalized tensor buffer directly
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
-      // 2. Invoke VeloPath Rust FFI Engine Bridge (with zero-lag native execution)
-      final telemetry = VeloPathGpsTelemetry(
-        latitude: state.gpsData.latitude,
-        longitude: state.gpsData.longitude,
-        speedKmh: state.gpsData.speedKmh,
-        headingDeg: 0.0,
-        timestampMs: now.millisecondsSinceEpoch,
+      // 2. Direct high-speed TFLite C++ inference (XNNPACK / ARM NEON multi-threaded)
+      // Runs live on every single frame without speed gating or complex Rust FFI copying
+      final rawDetections = await tfliteEngine.runInference(
+        float32Buffer,
+        confThreshold: 0.15,
+        iouThreshold: 0.35,
+        roadRoiTop: state.isBenchTestMode ? 0.0 : 0.20,
+        benchMode: state.isBenchTestMode,
       );
 
-      final frameBytes = event.image.planes.isNotEmpty ? event.image.planes[0].bytes : Uint8List(0);
-      final rustResult = await _rustBridge.processFrame(
-        frameBytes: frameBytes,
-        width: event.image.width,
-        height: event.image.height,
-        telemetry: telemetry,
-        dtSeconds: deltaSec > 0.001 ? deltaSec : 0.033,
-        benchMode: state.isBenchTestMode || !state.isRoadGateEnabled,
-      );
-
-      // 3. Surface Gate & YOLO11n INT8 Inference Pipeline
-      final bool isRoad = state.isBenchTestMode || !state.isRoadGateEnabled || rustResult.isRoadSurface;
-      List<DetectionResult> rawDetections = [];
       double maxSeverity = 0.0;
-      String statusText = state.isBenchTestMode
-          ? 'BENCH TEST'
-          : (state.isLowSpeed ? 'STANDBY (< 8 KM/H)' : rustResult.sceneStatus.code);
-
-      if (!isRoad) {
-        statusText = 'SURFACE GATE: NON-ROAD SCENE';
-        rawDetections = [];
-      } else {
-        // Run real YOLO11n INT8 neural inference
-        rawDetections = await tfliteEngine.runInference(
-          float32Buffer,
-          confThreshold: state.confidenceThreshold,
-          iouThreshold: 0.35,
-          roadRoiTop: state.isBenchTestMode ? 0.0 : 0.25,
-          benchMode: state.isBenchTestMode,
-        );
-
-        for (final d in rawDetections) {
-          double sev = 3.0;
-          switch (d.classId) {
-            case 0: // D00 Longitudinal
-              sev = 2.0 + 2.0 * d.confidence;
-              break;
-            case 1: // D10 Transverse
-              sev = 3.0 + 2.0 * d.confidence;
-              break;
-            case 2: // D20 Alligator
-              sev = 5.0 + 3.0 * d.confidence;
-              break;
-            case 3: // D40 Pothole
-              sev = 7.0 + 3.0 * d.confidence;
-              break;
-          }
-          if (sev > maxSeverity) maxSeverity = sev;
+      for (final d in rawDetections) {
+        double sev = 3.0;
+        switch (d.classId) {
+          case 0:
+            sev = 2.0 + 2.0 * d.confidence;
+            break;
+          case 1:
+            sev = 3.0 + 2.0 * d.confidence;
+            break;
+          case 2:
+            sev = 5.0 + 3.0 * d.confidence;
+            break;
+          case 3:
+            sev = 7.0 + 3.0 * d.confidence;
+            break;
         }
+        if (sev > maxSeverity) maxSeverity = sev;
       }
 
       stopwatch.stop();
       final latencyMs = stopwatch.elapsedMilliseconds;
       final double fps = currentFps;
 
-      // 4. Temporal Tracking & Coordinate EMA Smoothing with Persistent Spatial Lock
+      // 3. Temporal Tracking & Coordinate EMA Smoothing
       final trackedList = _temporalFilter.processFrame(rawDetections, timestamp: now);
 
-      // 5. Intelligent Sensory Alert Evaluation with Cooldown & Speed Gating
+      // 4. Sensory Alert Evaluation
       await _alertManager.evaluateAlerts(
         detections: trackedList,
         currentSpeedKmh: state.isBenchTestMode ? 45.0 : state.gpsData.speedKmh,
         timestamp: now,
       );
 
-      // 6. Check for confirmed critical hazards (for visual HUD banners)
+      // 5. Check for confirmed critical hazards
       DetectionResult? criticalAlert;
       final criticalTracked = trackedList.where((t) => t.isCritical).toList();
       if (criticalTracked.isNotEmpty) {
@@ -294,7 +286,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         }
       }
 
-      // 7. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
+      // 6. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
       int loggedCount = state.totalLoggedCount;
       final confirmedTracks = trackedList.where((t) => t.isConfirmed).toList();
       if (confirmedTracks.isNotEmpty) {
@@ -324,8 +316,12 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         }
       }
 
+      final statusText = state.isBenchTestMode
+          ? 'BENCH TEST'
+          : (rawDetections.isNotEmpty ? 'HAZARDS DETECTED' : 'ROAD SCANNING');
+
       emit(state.copyWith(
-        isRoadDetected: isRoad,
+        isRoadDetected: true,
         detections: rawDetections,
         trackedDetections: List.from(trackedList),
         inferenceLatencyMs: latencyMs,
@@ -334,7 +330,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         totalLoggedCount: loggedCount,
         maxSeverityScore: maxSeverity,
         sceneStatusText: statusText,
-        isNativeRustEngine: rustResult.isNativeExecution || _rustBridge.isNativeLoaded,
+        isNativeRustEngine: _rustBridge.isNativeLoaded,
         d00Count: d00,
         d10Count: d10,
         d20Count: d20,

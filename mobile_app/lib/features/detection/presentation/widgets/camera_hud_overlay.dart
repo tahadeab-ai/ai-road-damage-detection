@@ -262,7 +262,7 @@ class CameraHudOverlay extends StatelessWidget {
                           ),
                           const SizedBox(width: 5),
                           Text(
-                            '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS',
+                            '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS • F#${state.frameCount}',
                             style: const TextStyle(
                               color: AppColors.textSecondary,
                               fontSize: 10,

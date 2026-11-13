@@ -64,7 +64,6 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   /// Verifies sequential permissions through PermissionStateMachine before instantiating hardware controller.
   Future<void> _verifyPermissionsAndSetupCamera() async {
     try {
-      context.read<DetectionBloc>().add(const InitializeDetectionSystem());
       final granted = await _permissionMachine.requestSequentialPermissions();
       if (!mounted) return;
 
@@ -154,10 +153,6 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
       });
 
       if (mounted) {
-        final bloc = context.read<DetectionBloc>();
-        if (!bloc.state.isInitialized) {
-          bloc.add(const InitializeDetectionSystem());
-        }
         setState(() => _isCameraReady = true);
       }
     } catch (e) {
