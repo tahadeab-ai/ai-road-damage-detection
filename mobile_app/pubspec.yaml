@@ -1,7 +1,7 @@
 name: road_guard_mobile
 description: "VeloPath AI (v2.0) - Autonomous Road Surface Intelligence Platform"
 publish_to: 'none'
-version: 2.2.0+4
+version: 2.2.1+5
 
 environment:
   sdk: ">=3.5.0 <4.0.0"

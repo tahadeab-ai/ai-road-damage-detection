@@ -112,7 +112,7 @@ class VeloPathMobileApp extends StatelessWidget {
             tfliteEngine: tfliteEngine,
             gpsService: gpsService,
             hazardRepository: hazardRepository,
-          )..add(InitializeDetectionSystem()),
+          )..add(const InitializeDetectionSystem()),
         ),
       ],
       child: MaterialApp(

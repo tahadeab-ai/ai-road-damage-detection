@@ -36,7 +36,7 @@ class DetectionState extends Equatable {
 
   const DetectionState({
     required this.isInitialized,
-    required this.isStreaming,
+    this.isStreaming = true,
     required this.detections,
     required this.trackedDetections,
     required this.inferenceLatencyMs,
@@ -71,7 +71,7 @@ class DetectionState extends Equatable {
   factory DetectionState.initial() {
     return const DetectionState(
       isInitialized: false,
-      isStreaming: false,
+      isStreaming: true,
       detections: [],
       trackedDetections: [],
       inferenceLatencyMs: 0,

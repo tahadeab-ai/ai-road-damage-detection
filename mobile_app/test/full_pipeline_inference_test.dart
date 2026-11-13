@@ -3,8 +3,14 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive/hive.dart';
 import 'package:road_guard_mobile/core/utils/image_processor.dart';
+import 'package:road_guard_mobile/features/detection/data/datasources/tflite_engine.dart';
+import 'package:road_guard_mobile/features/detection/presentation/bloc/detection_bloc.dart';
+import 'package:road_guard_mobile/features/detection/presentation/bloc/detection_event.dart';
 import 'package:road_guard_mobile/features/detection/presentation/bloc/detection_state.dart';
+import 'package:road_guard_mobile/features/history/data/repositories/hazard_repository.dart';
+import 'package:road_guard_mobile/features/telemetry/services/gps_service.dart';
 
 class _FakeImageFormat extends Fake implements ImageFormat {
   @override
@@ -49,7 +55,13 @@ class _FakeCameraImage extends Fake implements CameraImage {
 }
 
 void main() {
-  group('VeloPath AI v2.2.0 Full Pipeline & Samsung YUV Resilience', () {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final tempDir = await Directory.systemTemp.createTemp('hive_test');
+    Hive.init(tempDir.path);
+  });
+
+  group('VeloPath AI v2.2.1 Full Pipeline & Samsung YUV Resilience', () {
     test('ImageProcessor cameraImageToFloat32Array handles Samsung truncated semi-planar UV buffers without RangeError', () {
       const int w = 1280;
       const int h = 720;
@@ -122,6 +134,7 @@ void main() {
       final initial = DetectionState.initial();
       expect(initial.frameCount, equals(0));
       expect(initial.lastPipelineError, isNull);
+      expect(initial.isStreaming, isTrue);
 
       final updated = initial.copyWith(
         frameCount: 42,
@@ -132,6 +145,44 @@ void main() {
 
       final cleared = updated.copyWith(lastPipelineError: () => null);
       expect(cleared.lastPipelineError, isNull);
+    });
+
+    test('DetectionBloc initializes properly and processes camera frame with ticking FPS and frameCount', () async {
+      final initial = DetectionState.initial();
+      expect(initial.isStreaming, isTrue);
+
+      final tflite = TfliteEngine();
+      final gps = GpsService();
+      final repo = HazardRepository();
+      final bloc = DetectionBloc(
+        tfliteEngine: tflite,
+        gpsService: gps,
+        hazardRepository: repo,
+      );
+
+      bloc.add(const InitializeDetectionSystem());
+      await pumpEventQueue();
+
+      expect(bloc.state.isStreaming, isTrue);
+
+      const int w = 640;
+      const int h = 480;
+      final fakeImage = _FakeCameraImage(
+        width: w,
+        height: h,
+        format: _FakeImageFormat(ImageFormatGroup.yuv420, raw: 17),
+        planes: [
+          _FakePlane(bytes: Uint8List(w * h * 3 ~/ 2), bytesPerRow: w, bytesPerPixel: 1),
+        ],
+      );
+
+      bloc.add(ProcessCameraFrame(fakeImage));
+      await pumpEventQueue(times: 5);
+
+      expect(bloc.state.frameCount, greaterThanOrEqualTo(1));
+      expect(bloc.state.fps, greaterThan(0.0));
+
+      await bloc.close();
     });
   });
 }

@@ -180,6 +180,14 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     final double currentFps = deltaSec > 0.005 ? (1.0 / deltaSec).clamp(1.0, 120.0) : 30.0;
 
     try {
+      // Auto-initialize if frame arrives before lifecycle completes
+      if (!tfliteEngine.isInitialized) {
+        await tfliteEngine.initialize();
+      }
+      if (!_rustBridge.isNativeLoaded) {
+        await _rustBridge.initialize();
+      }
+
       // 1. Process camera image bytes into normalized tensor buffer
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
@@ -206,7 +214,9 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       final bool isRoad = state.isBenchTestMode || !state.isRoadGateEnabled || rustResult.isRoadSurface;
       List<DetectionResult> rawDetections = [];
       double maxSeverity = 0.0;
-      String statusText = state.isBenchTestMode ? 'BENCH TEST' : rustResult.sceneStatus.code;
+      String statusText = state.isBenchTestMode
+          ? 'BENCH TEST'
+          : (state.isLowSpeed ? 'STANDBY (< 8 KM/H)' : rustResult.sceneStatus.code);
 
       if (!isRoad) {
         statusText = 'SURFACE GATE: NON-ROAD SCENE';

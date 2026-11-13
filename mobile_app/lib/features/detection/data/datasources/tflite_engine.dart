@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -42,12 +41,9 @@ class TfliteEngine {
         _labels = ['Longitudinal Crack', 'Transverse Crack', 'Alligator Crack', 'Pothole'];
       }
 
-      // 2. Configure Interpreter Options with NNAPI / GPU Delegates
-      final options = InterpreterOptions();
-      if (Platform.isAndroid) {
-        options.useNnApiForAndroid = true;
-      }
-      options.threads = 4;
+      // 2. Configure Interpreter Options with XNNPACK / ARM NEON multi-threading
+      // Strictly avoid GPU delegates / NNAPI on full INT8 models to prevent Samsung driver crashes
+      final options = InterpreterOptions()..threads = 4;
 
       // 3. Load YOLO model from asset bundle (prioritize INT8 quantized weights)
       try {
