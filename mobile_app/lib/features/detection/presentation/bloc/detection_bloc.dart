@@ -26,6 +26,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
   bool _isProcessingFrame = false;
   bool _isInitializing = false;
   DateTime _lastFrameTime = DateTime.now();
+  int _rawFrameCounter = 0;
 
   bool get isProcessingFrame => _isProcessingFrame;
 
@@ -77,11 +78,13 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     ResetHazardCounters event,
     Emitter<DetectionState> emit,
   ) {
+    _rawFrameCounter = 0;
     emit(state.copyWith(
       d00Count: 0,
       d10Count: 0,
       d20Count: 0,
       d40Count: 0,
+      frameCount: 0,
     ));
   }
 
@@ -124,13 +127,14 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       emit(state.copyWith(
         isInitialized: true,
         isStreaming: true,
-        isBenchTestMode: true,
-        confidenceThreshold: 0.15,
+        isBenchTestMode: false,
+        isRoadGateEnabled: true,
+        confidenceThreshold: 0.20,
         totalLoggedCount: 0,
         gpsData: gpsService.currentGpsData,
         isMuted: _alertManager.isMuted,
         isNativeRustEngine: _rustBridge.isNativeLoaded,
-        sceneStatusText: 'BENCH TEST',
+        sceneStatusText: 'ROAD SCANNING',
         lastPipelineError: () => null,
       ));
     } catch (e, st) {
@@ -198,11 +202,20 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     if (!state.isStreaming || _isProcessingFrame) return;
 
     _isProcessingFrame = true;
+    _rawFrameCounter++;
     final stopwatch = Stopwatch()..start();
     final now = DateTime.now();
     final double deltaSec = now.difference(_lastFrameTime).inMilliseconds / 1000.0;
     _lastFrameTime = now;
     final double currentFps = deltaSec > 0.005 ? (1.0 / deltaSec).clamp(1.0, 120.0) : 30.0;
+
+    // Immediately emit frame counter before inference so F#1, F#2... ticks guaranteed
+    emit(state.copyWith(
+      frameCount: _rawFrameCounter,
+      fps: double.parse(currentFps.toStringAsFixed(1)),
+    ));
+
+    debugPrint('[DetectionBloc] Frame #$_rawFrameCounter entering ImageProcessor...');
 
     try {
       // Auto-initialize if frame arrives before lifecycle completes
@@ -213,15 +226,48 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       // 1. Process camera image bytes into normalized tensor buffer directly
       final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
 
-      // 2. Direct high-speed TFLite C++ inference (XNNPACK / ARM NEON multi-threaded)
-      // Runs live on every single frame without speed gating or complex Rust FFI copying
+      // 2. Camera Lens Occlusion Check (hand/finger over lens or phone covered)
+      if (ImageProcessor.isLensOccluded(float32Buffer)) {
+        stopwatch.stop();
+        emit(state.copyWith(
+          sceneStatusText: '⚠️ CAMERA LENS BLOCKED / OCCLUDED',
+          detections: [],
+          trackedDetections: [],
+          inferenceLatencyMs: stopwatch.elapsedMilliseconds,
+          fps: double.parse(currentFps.toStringAsFixed(1)),
+          lastPipelineError: () => null,
+        ));
+        return;
+      }
+
+      // 3. Road Surface Spectral Gating (Door / Wall / Carpet suppression in DRIVE mode)
+      if (state.isRoadGateEnabled && !state.isBenchTestMode) {
+        final isRoad = await tfliteEngine.checkRoadSurface(float32Buffer, benchMode: false);
+        if (!isRoad) {
+          stopwatch.stop();
+          emit(state.copyWith(
+            sceneStatusText: 'SURFACE GATE: NON-ROAD SCENE',
+            detections: [],
+            trackedDetections: [],
+            inferenceLatencyMs: stopwatch.elapsedMilliseconds,
+            fps: double.parse(currentFps.toStringAsFixed(1)),
+            lastPipelineError: () => null,
+          ));
+          return;
+        }
+      }
+
+      // 4. Direct high-speed TFLite C++ inference (XNNPACK / ARM NEON multi-threaded)
+      debugPrint('[DetectionBloc] Frame #$_rawFrameCounter entering TFLite...');
       final rawDetections = await tfliteEngine.runInference(
         float32Buffer,
-        confThreshold: 0.15,
+        confThreshold: state.confidenceThreshold,
         iouThreshold: 0.35,
         roadRoiTop: state.isBenchTestMode ? 0.0 : 0.20,
         benchMode: state.isBenchTestMode,
       );
+
+      debugPrint('[DetectionBloc] Frame #$_rawFrameCounter TFLite done in ${stopwatch.elapsedMilliseconds}ms, detections=${rawDetections.length}');
 
       double maxSeverity = 0.0;
       for (final d in rawDetections) {
@@ -264,27 +310,11 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         criticalAlert = criticalTracked.first.toDetectionResult();
       }
 
-      // Update defect class cumulative counts
+      // Update defect class cumulative counts (strictly increment for confirmed unique tracks)
       int d00 = state.d00Count;
       int d10 = state.d10Count;
       int d20 = state.d20Count;
       int d40 = state.d40Count;
-      for (final d in rawDetections) {
-        switch (d.classId) {
-          case 0:
-            d00++;
-            break;
-          case 1:
-            d10++;
-            break;
-          case 2:
-            d20++;
-            break;
-          case 3:
-            d40++;
-            break;
-        }
-      }
 
       // 6. Persist confirmed hazard incidents (Duplicate-free: strictly 1 record per unique track event)
       int loggedCount = state.totalLoggedCount;
@@ -295,6 +325,22 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           track.hasBeenLogged = true;
 
           final det = track.toDetectionResult();
+
+          // Increment class counter strictly once per unique confirmed hazard
+          switch (det.classId) {
+            case 0:
+              d00++;
+              break;
+            case 1:
+              d10++;
+              break;
+            case 2:
+              d20++;
+              break;
+            case 3:
+              d40++;
+              break;
+          }
 
           // 100% Guaranteed Evidence snapshot capture from active frame memory
           final snapshotPath = await SnapshotCaptureService.captureHazardSnapshot(
@@ -335,7 +381,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         d10Count: d10,
         d20Count: d20,
         d40Count: d40,
-        frameCount: state.frameCount + 1,
+        frameCount: _rawFrameCounter,
         pendingSyncCount: _rustBridge.getPendingSyncCount(),
         lastPipelineError: () => null,
       ));
@@ -346,7 +392,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         inferenceLatencyMs: stopwatch.elapsedMilliseconds > 0 ? stopwatch.elapsedMilliseconds : 16,
         fps: double.parse(currentFps.toStringAsFixed(1)),
         isNativeRustEngine: _rustBridge.isNativeLoaded,
-        frameCount: state.frameCount + 1,
+        frameCount: _rawFrameCounter,
         lastPipelineError: () => e.toString(),
       ));
     } finally {

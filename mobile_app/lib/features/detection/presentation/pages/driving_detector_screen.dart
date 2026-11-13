@@ -26,8 +26,9 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   CameraController? _cameraController;
   final PermissionStateMachine _permissionMachine = PermissionStateMachine();
   bool _isCameraReady = false;
-  bool _isSubmittingFrame = false;
+  bool _isInitializingCamera = false;
   late AnimationController _animController;
+  int _debugLogFrameCount = 0;
 
   @override
   void initState() {
@@ -45,7 +46,7 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   void _onPermissionStateChanged() {
     if (mounted) {
       setState(() {});
-      if (_permissionMachine.isReady && _cameraController == null) {
+      if (_permissionMachine.isReady && _cameraController == null && !_isInitializingCamera) {
         _initializeCamera();
       }
     }
@@ -61,13 +62,13 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     }
   }
 
-  /// Verifies sequential permissions through PermissionStateMachine before instantiating hardware controller.
+  /// Verifies sequential permissions through PermissionStateMachine.
   Future<void> _verifyPermissionsAndSetupCamera() async {
     try {
       final granted = await _permissionMachine.requestSequentialPermissions();
       if (!mounted) return;
 
-      if (granted) {
+      if (granted && _cameraController == null && !_isInitializingCamera) {
         await _initializeCamera();
       }
     } catch (e) {
@@ -80,7 +81,7 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     final granted = await _permissionMachine.requestSequentialPermissions();
     if (!mounted) return;
 
-    if (granted) {
+    if (granted && _cameraController == null && !_isInitializingCamera) {
       await _initializeCamera();
     } else if (_permissionMachine.currentStep == PermissionStep.permanentlyDenied) {
       _permissionMachine.openAppSettingsMenu();
@@ -91,11 +92,12 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
   Future<void> _stopAndDisposeCamera() async {
     try {
       if (_cameraController != null) {
-        if (_cameraController!.value.isStreamingImages) {
-          await _cameraController!.stopImageStream();
-        }
-        await _cameraController!.dispose();
+        final ctrl = _cameraController;
         _cameraController = null;
+        if (ctrl!.value.isStreamingImages) {
+          await ctrl.stopImageStream();
+        }
+        await ctrl.dispose();
       }
     } catch (e) {
       debugPrint('[DrivingDetectorScreen] Camera disposal notice: $e');
@@ -108,6 +110,8 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
 
   /// Cleanly instantiates and streams CameraController.
   Future<void> _initializeCamera() async {
+    if (_isInitializingCamera) return;
+    _isInitializingCamera = true;
     await _stopAndDisposeCamera();
 
     try {
@@ -123,34 +127,67 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
         orElse: () => cameras.first,
       );
 
-      final controller = CameraController(
-        backCamera,
+      // Support multi-stream surface combinations across diverse Android HALs (e.g. Samsung Note 10)
+      final candidatePresets = [
+        ResolutionPreset.high,
         ResolutionPreset.medium,
-        enableAudio: false,
-        imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
-      );
+        ResolutionPreset.low,
+      ];
 
-      await controller.initialize();
+      CameraController? selectedController;
 
-      if (!mounted) {
-        await controller.dispose();
-        return;
+      for (final preset in candidatePresets) {
+        CameraController? tempController;
+        try {
+          debugPrint('[DrivingDetectorScreen] Testing camera preset: $preset');
+          tempController = CameraController(
+            backCamera,
+            preset,
+            enableAudio: false,
+            imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
+          );
+
+          await tempController.initialize();
+
+          if (!mounted) {
+            await tempController.dispose();
+            return;
+          }
+
+          _debugLogFrameCount = 0;
+          await tempController.startImageStream((CameraImage image) {
+            if (!mounted) return;
+            final bloc = context.read<DetectionBloc>();
+            if (bloc.isProcessingFrame) return;
+
+            if (_debugLogFrameCount < 5) {
+              _debugLogFrameCount++;
+              debugPrint(
+                '[CameraStream] Frame received: ${image.width}x${image.height}, format=${image.format.group}, planes=${image.planes.length}',
+              );
+            }
+
+            bloc.add(ProcessCameraFrame(image));
+          });
+
+          selectedController = tempController;
+          debugPrint('[DrivingDetectorScreen] Camera stream active with preset: $preset');
+          break;
+        } catch (e) {
+          debugPrint('[DrivingDetectorScreen] Preset $preset failed to stream: $e');
+          if (tempController != null) {
+            try {
+              await tempController.dispose();
+            } catch (_) {}
+          }
+        }
       }
 
-      _cameraController = controller;
+      if (selectedController == null) {
+        throw Exception('No supported camera resolution preset could be initialized.');
+      }
 
-      // Start live camera stream with backpressure queuing protection
-      await _cameraController!.startImageStream((CameraImage image) {
-        if (!mounted || _isSubmittingFrame) return;
-        final bloc = context.read<DetectionBloc>();
-        if (!bloc.state.isStreaming || bloc.isProcessingFrame) return;
-
-        _isSubmittingFrame = true;
-        bloc.add(ProcessCameraFrame(image));
-        Future.microtask(() {
-          _isSubmittingFrame = false;
-        });
-      });
+      _cameraController = selectedController;
 
       if (mounted) {
         setState(() => _isCameraReady = true);
@@ -158,6 +195,8 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     } catch (e) {
       debugPrint('[DrivingDetectorScreen] Camera initialization notice: $e');
       if (mounted) setState(() => _isCameraReady = false);
+    } finally {
+      _isInitializingCamera = false;
     }
   }
 

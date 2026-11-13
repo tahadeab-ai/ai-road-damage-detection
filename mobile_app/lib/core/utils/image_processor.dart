@@ -178,4 +178,36 @@ class ImageProcessor {
 
     return float32Buffer;
   }
+
+  /// Detects whether camera lens is blocked/occluded (e.g. hand/finger over lens or phone face down).
+  /// Computes spatial mean and variance across sampled pixels in < 0.2ms.
+  static bool isLensOccluded(Float32List rgbBuffer) {
+    if (rgbBuffer.length < inputWidth * inputHeight * channels) return false;
+    double sumLum = 0.0;
+    double sumLumSq = 0.0;
+    int samples = 0;
+
+    // Sample 256 pixels across the 640x640 frame
+    for (int y = 40; y < 600; y += 35) {
+      for (int x = 40; x < 600; x += 35) {
+        final int idx = (y * inputWidth + x) * channels;
+        if (idx + 2 < rgbBuffer.length) {
+          final double r = rgbBuffer[idx];
+          final double g = rgbBuffer[idx + 1];
+          final double b = rgbBuffer[idx + 2];
+          final double lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          sumLum += lum;
+          sumLumSq += lum * lum;
+          samples++;
+        }
+      }
+    }
+
+    if (samples == 0) return false;
+    final double meanLum = sumLum / samples;
+    final double variance = (sumLumSq / samples) - (meanLum * meanLum);
+
+    // Hand/finger over lens produces either deep darkness (<0.06) or uniform flat blur with near-zero texture variance
+    return meanLum < 0.06 || (variance < 0.0008 && meanLum < 0.40);
+  }
 }

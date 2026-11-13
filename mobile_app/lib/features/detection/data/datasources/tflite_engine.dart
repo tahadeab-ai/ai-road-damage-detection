@@ -6,18 +6,28 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import '../../../../core/utils/nms_utils.dart';
 import '../../domain/models/detection_result.dart';
 
-/// On-Device TFLite inference engine for YOLO11 road damage detection
-/// integrated with a lightweight Road Surface Binary Gate (MobileNetV3).
+/// On-Device TFLite inference engine for YOLO road damage detection.
+/// Strictly executes real TFLite neural network inference with NO fake/synthetic fallbacks.
 class TfliteEngine {
-  static const String modelAssetPath = 'assets/models/yolo11n_int8.tflite';
-  static const String fallbackModelAssetPath = 'assets/models/road_damage_yolo11n_float16.tflite';
-  static const String roadGateAssetPath = 'assets/models/road_gate.tflite';
+  // Use the verified road damage model (per-tensor INT8, 512x512 input, [1, 9, 5376] output)
+  static const String primaryModelAssetPath = 'assets/models/road_damage_yolo11n_float16.tflite';
+  static const String fallbackModelAssetPath = 'assets/models/yolo11n_int8.tflite';
   static const String labelsAssetPath = 'assets/models/labels.txt';
 
   Interpreter? _interpreter;
-  Interpreter? _roadGateInterpreter;
   List<String> _labels = [];
   bool _isInitialized = false;
+
+  int _modelInputW = 512;
+  int _modelInputH = 512;
+  TensorType _inputType = TensorType.int8;
+  double _inputScale = 0.00392157;
+  int _inputZeroPoint = -128;
+
+  List<int> _outputShape = [1, 9, 5376];
+  TensorType _outputType = TensorType.int8;
+  double _outputScale = 0.00392157;
+  int _outputZeroPoint = -128;
 
   bool get isInitialized => _isInitialized;
   List<String> get labels => _labels;
@@ -38,84 +48,83 @@ class TfliteEngine {
       } catch (_) {}
 
       if (_labels.isEmpty) {
-        _labels = ['Longitudinal Crack', 'Transverse Crack', 'Alligator Crack', 'Pothole'];
+        _labels = [
+          'Longitudinal Crack',
+          'Transverse Crack',
+          'Alligator Crack',
+          'Pothole',
+          'Speed Breaker',
+        ];
       }
 
-      // 2. Configure Interpreter Options with XNNPACK / ARM NEON multi-threading
-      // Strictly avoid GPU delegates / NNAPI on full INT8 models to prevent Samsung driver crashes
       final options = InterpreterOptions()..threads = 4;
 
-      // 3. Load YOLO model from asset bundle (prioritize INT8 quantized weights)
+      // 2. Load model from assets
       try {
-        _interpreter = await Interpreter.fromAsset(modelAssetPath, options: options);
+        _interpreter = await Interpreter.fromAsset(primaryModelAssetPath, options: options);
         _interpreter?.allocateTensors();
-        debugPrint('[TfliteEngine] Loaded primary YOLO11n INT8 model.');
+        debugPrint('[TfliteEngine] Successfully loaded primary model: $primaryModelAssetPath');
       } catch (e) {
-        debugPrint('[TfliteEngine] INT8 model load notice: $e. Attempting fallback float16 model...');
+        debugPrint('[TfliteEngine] Primary model load error: $e. Trying fallback: $fallbackModelAssetPath');
         try {
           _interpreter = await Interpreter.fromAsset(fallbackModelAssetPath, options: options);
           _interpreter?.allocateTensors();
-          debugPrint('[TfliteEngine] Loaded fallback float16 model.');
+          debugPrint('[TfliteEngine] Successfully loaded fallback model: $fallbackModelAssetPath');
         } catch (fErr) {
-          debugPrint('[TfliteEngine] Notice: Could not allocate local interpreter: $fErr');
+          debugPrint('[TfliteEngine] Fatal: Failed to load both models: $fErr');
         }
       }
 
-      // 4. Load Road Surface Binary Gatekeeper model
-      try {
-        _roadGateInterpreter = await Interpreter.fromAsset(roadGateAssetPath, options: options);
-        _roadGateInterpreter?.allocateTensors();
-      } catch (e) {
-        debugPrint('[TfliteEngine] Road gate interpreter notice: $e');
+      if (_interpreter != null) {
+        final inTensor = _interpreter!.getInputTensor(0);
+        final inShape = inTensor.shape;
+        _inputType = inTensor.type;
+        _inputScale = inTensor.params.scale > 0 ? inTensor.params.scale : 0.00392157;
+        _inputZeroPoint = inTensor.params.zeroPoint;
+
+        if (inShape.length >= 4) {
+          // NHWC: [1, H, W, C]
+          _modelInputH = inShape[1];
+          _modelInputW = inShape[2];
+        }
+
+        final outTensor = _interpreter!.getOutputTensor(0);
+        _outputShape = outTensor.shape;
+        _outputType = outTensor.type;
+        _outputScale = outTensor.params.scale > 0 ? outTensor.params.scale : 0.00392157;
+        _outputZeroPoint = outTensor.params.zeroPoint;
+
+        debugPrint('[TfliteEngine] Model Input: shape=$inShape, type=$_inputType, scale=$_inputScale, zp=$_inputZeroPoint');
+        debugPrint('[TfliteEngine] Model Output: shape=$_outputShape, type=$_outputType, scale=$_outputScale, zp=$_outputZeroPoint');
       }
 
       _isInitialized = true;
-      debugPrint('[TfliteEngine] Initialized successfully.');
-    } catch (e) {
-      debugPrint('[TfliteEngine] Notice during hardware initialization: $e');
+      debugPrint('[TfliteEngine] Engine ready.');
+    } catch (e, st) {
+      debugPrint('[TfliteEngine] Initialization failed: $e\n$st');
       _isInitialized = true;
     }
   }
 
-  /// Gatekeeper: Binary Road Surface Classifier (Road vs Non-Road).
-  /// Skips YOLO detection if the camera is pointing at indoor floors, rugs, tiles, or furniture.
+  /// Gatekeeper: Spectral Road Surface Classifier (Road vs Non-Road).
+  /// Rejects indoor scenes (white walls, doors, colorful carpets, wooden floors).
   Future<bool> checkRoadSurface(Float32List inputBuffer, {bool benchMode = false}) async {
     if (benchMode) return true; // Bench test bypasses road surface gate
 
     if (!_isInitialized) {
       await initialize();
     }
-    if (!_isInitialized) {
-      await initialize();
-    }
 
-    // 1. Run native Road Gatekeeper Interpreter if loaded
-    if (_roadGateInterpreter != null) {
-      try {
-        final output = List.generate(1, (_) => List.filled(2, 0.0));
-        // Run classification on input tensor
-        _roadGateInterpreter!.run(inputBuffer, output);
-        final roadProb = output[0][1];
-        if (roadProb < 0.50) {
-          return false; // Non-Road classified by MobileNetV3 gatekeeper
-        }
-      } catch (_) {
-        // Fall back to robust spectral analysis
-      }
-    }
-
-    // 2. Multi-spectral Road Texture & Chrominance Verification on Road ROI (lower 65% of frame)
-    // Outdoor asphalt / macadam exhibits low chromatic saturation (neutral greys/blacks)
-    // whereas indoor environments (carpets, parquet, tiles, tables) display high saturation or unnatural hues.
     try {
       const int w = 640;
       int sampledPixels = 0;
       double totalSaturation = 0.0;
       double totalLuminance = 0.0;
+      double sumLumSq = 0.0;
 
-      // Sample pixels in lower road zone (Y from 300 to 580, X from 120 to 520, step by 20)
-      for (int y = 300; y < 580; y += 20) {
-        for (int x = 120; x < 520; x += 20) {
+      // Sample pixels in lower road zone (Y from 280 to 600, X from 100 to 540)
+      for (int y = 280; y < 600; y += 16) {
+        for (int x = 100; x < 540; x += 16) {
           final int idx = (y * w + x) * 3;
           if (idx + 2 < inputBuffer.length) {
             final double r = inputBuffer[idx];
@@ -131,6 +140,7 @@ class TfliteEngine {
 
             totalSaturation += sat;
             totalLuminance += lum;
+            sumLumSq += lum * lum;
             sampledPixels++;
           }
         }
@@ -139,121 +149,183 @@ class TfliteEngine {
       if (sampledPixels > 0) {
         final double avgSat = totalSaturation / sampledPixels;
         final double avgLum = totalLuminance / sampledPixels;
+        final double variance = (sumLumSq / sampledPixels) - (avgLum * avgLum);
 
-        // Indoor carpet/wood floors typically have high saturation (avgSat > 0.38)
-        // or extreme uniform luminance (pure white tile > 0.95 or pitch black < 0.02)
-        if (avgSat > 0.42 || avgLum > 0.97) {
-          return false; // Non-road detected via spectral analysis
+        // 1. High saturation indicates colorful indoor objects, rugs, wood, flowers (avgSat > 0.26)
+        if (avgSat > 0.26) {
+          return false;
+        }
+
+        // 2. Very bright uniform surface indicates white door, ceiling, or interior wall (avgLum > 0.70)
+        if (avgLum > 0.70) {
+          return false;
+        }
+
+        // 3. Flat painted wall/surface with low texture variance (< 0.0020) and moderate/high brightness
+        if (variance < 0.0020 && avgLum > 0.40) {
+          return false;
+        }
+
+        // 4. Extreme darkness (< 0.05)
+        if (avgLum < 0.05) {
+          return false;
         }
       }
     } catch (_) {
-      // Allow fallback if buffer calculation cannot be completed
+      // On error allow pass
     }
 
-    return true; // Verified road surface
+    return true;
   }
 
   /// Runs inference on a normalized [1, 640, 640, 3] Float32 buffer.
+  /// Strictly returns empty list `[]` when no real damage is detected or if an error occurs.
   Future<List<DetectionResult>> runInference(
     Float32List inputBuffer, {
     double confThreshold = 0.20,
     double iouThreshold = 0.35,
-    double roadRoiTop = 0.25,
+    double roadRoiTop = 0.20,
     bool benchMode = false,
   }) async {
     if (!_isInitialized) {
       await initialize();
     }
 
+    if (_interpreter == null) {
+      return [];
+    }
+
     final effectiveRoiTop = benchMode ? 0.0 : roadRoiTop;
-    final effectiveConf = benchMode ? (confThreshold > 0.15 ? 0.15 : confThreshold) : confThreshold;
+    final effectiveConf = confThreshold;
 
-    // If interpreter is active, run native TFLite execution
-    if (_interpreter != null) {
-      try {
-        final inputTensor = _interpreter!.getInputTensor(0);
-        final inputShape = inputTensor.shape;
-        final outputTensor = _interpreter!.getOutputTensor(0);
-        final outputShape = outputTensor.shape;
+    try {
+      // 1. Resample and quantize input buffer to match model input dimensions [modelH, modelW, 3]
+      final int modelW = _modelInputW;
+      final int modelH = _modelInputH;
+      const int srcW = 640;
+      const int srcH = 640;
+      final int inputLen = modelW * modelH * 3;
 
-        // 1. Prepare Input Tensor (handle NCHW vs NHWC and quantization)
-        final bool isNchw = inputShape.length >= 4 && inputShape[1] == 3;
-        final Float32List nchwBuffer;
-        if (isNchw) {
-          nchwBuffer = Float32List(640 * 640 * 3);
-          const int planeSize = 640 * 640;
-          for (int i = 0; i < planeSize; i++) {
-            nchwBuffer[i] = inputBuffer[i * 3]; // R
-            nchwBuffer[planeSize + i] = inputBuffer[i * 3 + 1]; // G
-            nchwBuffer[2 * planeSize + i] = inputBuffer[i * 3 + 2]; // B
+      final ByteBuffer inputByteBuffer;
+
+      if (_inputType == TensorType.int8) {
+        final i8 = Int8List(inputLen);
+        final double invScale = 1.0 / _inputScale;
+        final int zp = _inputZeroPoint;
+
+        int outIdx = 0;
+        for (int y = 0; y < modelH; y++) {
+          final int srcY = (y * srcH) ~/ modelH;
+          for (int x = 0; x < modelW; x++) {
+            final int srcX = (x * srcW) ~/ modelW;
+            final int srcIdx = (srcY * srcW + srcX) * 3;
+
+            final double r = inputBuffer[srcIdx];
+            final double g = inputBuffer[srcIdx + 1];
+            final double b = inputBuffer[srcIdx + 2];
+
+            i8[outIdx++] = (r * invScale + zp).round().clamp(-128, 127);
+            i8[outIdx++] = (g * invScale + zp).round().clamp(-128, 127);
+            i8[outIdx++] = (b * invScale + zp).round().clamp(-128, 127);
           }
-        } else {
-          nchwBuffer = inputBuffer;
         }
+        inputByteBuffer = i8.buffer;
+      } else if (_inputType == TensorType.uint8) {
+        final u8 = Uint8List(inputLen);
+        final double invScale = 1.0 / _inputScale;
+        final int zp = _inputZeroPoint;
 
-        final ByteBuffer inputByteBuffer;
-        if (inputTensor.type == TensorType.uint8) {
-          final scale = inputTensor.params.scale > 0 ? inputTensor.params.scale : (1.0 / 255.0);
-          final zeroPoint = inputTensor.params.zeroPoint;
-          final u8 = Uint8List(nchwBuffer.length);
-          for (int i = 0; i < nchwBuffer.length; i++) {
-            u8[i] = ((nchwBuffer[i] / scale) + zeroPoint).round().clamp(0, 255);
+        int outIdx = 0;
+        for (int y = 0; y < modelH; y++) {
+          final int srcY = (y * srcH) ~/ modelH;
+          for (int x = 0; x < modelW; x++) {
+            final int srcX = (x * srcW) ~/ modelW;
+            final int srcIdx = (srcY * srcW + srcX) * 3;
+
+            final double r = inputBuffer[srcIdx];
+            final double g = inputBuffer[srcIdx + 1];
+            final double b = inputBuffer[srcIdx + 2];
+
+            u8[outIdx++] = (r * invScale + zp).round().clamp(0, 255);
+            u8[outIdx++] = (g * invScale + zp).round().clamp(0, 255);
+            u8[outIdx++] = (b * invScale + zp).round().clamp(0, 255);
           }
-          inputByteBuffer = u8.buffer;
-        } else if (inputTensor.type == TensorType.int8) {
-          final scale = inputTensor.params.scale > 0 ? inputTensor.params.scale : (1.0 / 128.0);
-          final zeroPoint = inputTensor.params.zeroPoint;
-          final i8 = Int8List(nchwBuffer.length);
-          for (int i = 0; i < nchwBuffer.length; i++) {
-            i8[i] = ((nchwBuffer[i] / scale) + zeroPoint).round().clamp(-128, 127);
+        }
+        inputByteBuffer = u8.buffer;
+      } else {
+        // Float32
+        final f32 = Float32List(inputLen);
+        int outIdx = 0;
+        for (int y = 0; y < modelH; y++) {
+          final int srcY = (y * srcH) ~/ modelH;
+          for (int x = 0; x < modelW; x++) {
+            final int srcX = (x * srcW) ~/ modelW;
+            final int srcIdx = (srcY * srcW + srcX) * 3;
+
+            f32[outIdx++] = inputBuffer[srcIdx];
+            f32[outIdx++] = inputBuffer[srcIdx + 1];
+            f32[outIdx++] = inputBuffer[srcIdx + 2];
           }
-          inputByteBuffer = i8.buffer;
-        } else {
-          inputByteBuffer = nchwBuffer.buffer;
         }
-
-        // 2. Prepare Output Tensor buffer
-        final int totalOutputElements = outputShape.reduce((a, b) => a * b);
-        final outputBuffer = Float32List(totalOutputElements);
-
-        _interpreter!.runForMultipleInputs([inputByteBuffer], {0: outputBuffer.buffer});
-
-        final detections = _parseFlatYolo11Output(
-          outputBuffer,
-          outputShape,
-          effectiveConf,
-          iouThreshold,
-          roadRoiTop: effectiveRoiTop,
-        );
-
-        if (detections.isNotEmpty || !benchMode) {
-          return detections;
-        }
-      } catch (e, st) {
-        debugPrint('[TfliteEngine] Notice during inference parsing: $e\n$st');
+        inputByteBuffer = f32.buffer;
       }
-    }
 
-    // Graceful fallback for bench testing indoors
-    if (benchMode) {
-      return _generateBenchDetections(effectiveConf);
+      // 2. Prepare Output Tensor buffer
+      final int totalOutElements = _outputShape.reduce((a, b) => a * b);
+      final Float32List dequantizedOutput;
+
+      if (_outputType == TensorType.int8) {
+        final rawOut = Int8List(totalOutElements);
+        _interpreter!.runForMultipleInputs([inputByteBuffer], {0: rawOut.buffer});
+
+        dequantizedOutput = Float32List(totalOutElements);
+        final double os = _outputScale;
+        final int ozp = _outputZeroPoint;
+        for (int i = 0; i < totalOutElements; i++) {
+          dequantizedOutput[i] = (rawOut[i] - ozp) * os;
+        }
+      } else if (_outputType == TensorType.uint8) {
+        final rawOut = Uint8List(totalOutElements);
+        _interpreter!.runForMultipleInputs([inputByteBuffer], {0: rawOut.buffer});
+
+        dequantizedOutput = Float32List(totalOutElements);
+        final double os = _outputScale;
+        final int ozp = _outputZeroPoint;
+        for (int i = 0; i < totalOutElements; i++) {
+          dequantizedOutput[i] = (rawOut[i] - ozp) * os;
+        }
+      } else {
+        dequantizedOutput = Float32List(totalOutElements);
+        _interpreter!.runForMultipleInputs([inputByteBuffer], {0: dequantizedOutput.buffer});
+      }
+
+      // 3. Parse YOLO boxes
+      return _parseFlatYoloOutput(
+        dequantizedOutput,
+        _outputShape,
+        effectiveConf,
+        iouThreshold,
+        roadRoiTop: effectiveRoiTop,
+      );
+    } catch (e, st) {
+      debugPrint('[TfliteEngine] Exception during inference execution: $e\n$st');
+      return [];
     }
-    return [];
   }
 
-  /// Parses flat YOLO11 tensor buffer [1, C, N] or [1, N, C] into bounding boxes and applies NMS.
-  List<DetectionResult> _parseFlatYolo11Output(
+  /// Parses flat YOLO tensor buffer [1, C, N] or [1, N, C] into bounding boxes and applies NMS.
+  List<DetectionResult> _parseFlatYoloOutput(
     Float32List outputBuffer,
     List<int> outputShape,
     double confThreshold,
     double iouThreshold, {
-    double roadRoiTop = 0.25,
+    double roadRoiTop = 0.20,
   }) {
     final List<DetectionResult> candidates = [];
-    final int dim1 = outputShape.length >= 2 ? outputShape[outputShape.length - 2] : 84;
-    final int dim2 = outputShape.isNotEmpty ? outputShape[outputShape.length - 1] : 8400;
+    final int dim1 = outputShape.length >= 2 ? outputShape[outputShape.length - 2] : 9;
+    final int dim2 = outputShape.isNotEmpty ? outputShape[outputShape.length - 1] : 5376;
 
-    // Detect Channels-First ([C, N] where C < N, e.g. [84, 8400]) vs Channels-Last ([N, C])
+    // Detect Channels-First ([C, N] where C < N, e.g. [9, 5376]) vs Channels-Last ([N, C])
     final bool isChannelsFirst = dim1 < dim2;
     final int numChannels = isChannelsFirst ? dim1 : dim2;
     final int numPredictions = isChannelsFirst ? dim2 : dim1;
@@ -265,11 +337,15 @@ class TfliteEngine {
       final double w = isChannelsFirst ? outputBuffer[2 * numPredictions + i] : outputBuffer[i * numChannels + 2];
       final double h = isChannelsFirst ? outputBuffer[3 * numPredictions + i] : outputBuffer[i * numChannels + 3];
 
-      // Handle both normalized (0.0..1.0) and pixel-space (0.0..640.0) coordinates
-      final double normCx = cx > 1.5 ? (cx / 640.0) : cx;
-      final double normCy = cy > 1.5 ? (cy / 640.0) : cy;
-      final double normW = w > 1.5 ? (w / 640.0) : w;
-      final double normH = h > 1.5 ? (h / 640.0) : h;
+      // Handle both normalized (0.0..1.0) and pixel-space (0.0..512.0 or 0.0..640.0) coordinates
+      final double normCx = cx > 1.5 ? (cx / _modelInputW.toDouble()) : cx;
+      final double normCy = cy > 1.5 ? (cy / _modelInputH.toDouble()) : cy;
+      final double normW = w > 1.5 ? (w / _modelInputW.toDouble()) : w;
+      final double normH = h > 1.5 ? (h / _modelInputH.toDouble()) : h;
+
+      if (normW <= 0.01 || normH <= 0.01 || normW > 1.0 || normH > 1.0) {
+        continue;
+      }
 
       // Suppress detections outside Road Surface ROI (top zone is sky/horizon)
       if (normCy < roadRoiTop) {
@@ -280,8 +356,7 @@ class TfliteEngine {
       double maxScore = -1.0;
       int bestClassId = -1;
 
-      final int checkClasses = numClasses < 4 ? numClasses : 4;
-      for (int c = 0; c < checkClasses; c++) {
+      for (int c = 0; c < numClasses; c++) {
         final double score = isChannelsFirst
             ? outputBuffer[(4 + c) * numPredictions + i]
             : outputBuffer[i * numChannels + (4 + c)];
@@ -310,6 +385,8 @@ class TfliteEngine {
       }
     }
 
+    if (candidates.isEmpty) return [];
+
     return NmsUtils.performNMS(
       candidates,
       iouThreshold: iouThreshold,
@@ -317,23 +394,9 @@ class TfliteEngine {
     );
   }
 
-  /// Generates synthetic road damage detection for Bench Test Mode when testing indoors
-  List<DetectionResult> _generateBenchDetections(double confThreshold) {
-    return [
-      DetectionResult(
-        classId: 3, // D40 Pothole
-        className: 'Pothole (D40)',
-        confidence: 0.88,
-        normalizedRect: const Rect.fromLTWH(0.25, 0.45, 0.35, 0.22),
-      ),
-    ];
-  }
-
   void dispose() {
     _interpreter?.close();
     _interpreter = null;
-    _roadGateInterpreter?.close();
-    _roadGateInterpreter = null;
     _isInitialized = false;
   }
 }
