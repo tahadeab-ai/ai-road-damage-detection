@@ -66,6 +66,7 @@ RDD2022/
 *.onnx
 *.engine
 *.tflite
+!mobile_app/assets/models/*.tflite
 *.apk
 !releases/*.apk
 *.aab
