@@ -43,6 +43,7 @@ jobs:
         working-directory: repo-v231/mobile_app
         run: |
           flutter pub get
+          python3 -c "import glob, os, re; [open(p, 'w').write(re.sub(r'return\s+UnmodifiableUint8ListView\s*\(\s*([\s\S]*?)\s*\);', r'return \1.asUnmodifiableView();', open(p).read())) for p in glob.glob(os.path.expanduser('~/.pub-cache/**/tflite_flutter-*/lib/src/tensor.dart'), recursive=True)]"
           flutter build apk --release --target-platform android-arm64 --split-per-abi
           APK_FILE=$(find build/app/outputs/flutter-apk -name "*.apk" ! -name "*unaligned*" | head -n 1)
           echo "Found v2.3.1 APK: $APK_FILE"
@@ -68,6 +69,7 @@ jobs:
         working-directory: repo-v240/mobile_app
         run: |
           flutter pub get
+          python3 -c "import glob, os, re; [open(p, 'w').write(re.sub(r'return\s+UnmodifiableUint8ListView\s*\(\s*([\s\S]*?)\s*\);', r'return \1.asUnmodifiableView();', open(p).read())) for p in glob.glob(os.path.expanduser('~/.pub-cache/**/tflite_flutter-*/lib/src/tensor.dart'), recursive=True)]"
           flutter build apk --release --target-platform android-arm64 --split-per-abi
           APK_FILE=$(find build/app/outputs/flutter-apk -name "*.apk" ! -name "*unaligned*" | head -n 1)
           echo "Found v2.4.0 APK: $APK_FILE"
