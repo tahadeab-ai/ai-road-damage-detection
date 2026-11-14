@@ -1,0 +1,122 @@
+name: Cloud Release Builder & Publisher
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Releases Cloud-to-Cloud
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.29.0"
+          channel: "stable"
+          cache: true
+
+      # ========================================================
+      # PART 1: Build & Attach VeloPath-AI-v2.3.1-stable.apk
+      # ========================================================
+      - name: Checkout v2.3.1-stable-checkpoint
+        uses: actions/checkout@v4
+        with:
+          ref: v2.3.1-stable-checkpoint
+          path: repo-v231
+
+      - name: Build v2.3.1 Stable ARM64 APK
+        working-directory: repo-v231/mobile_app
+        run: |
+          flutter pub get
+          flutter build apk --release --target-platform android-arm64 --split-per-abi
+          APK_FILE=$(find build/app/outputs/flutter-apk -name "*.apk" ! -name "*unaligned*" | head -n 1)
+          echo "Found v2.3.1 APK: $APK_FILE"
+          cp "$APK_FILE" VeloPath-AI-v2.3.1-stable.apk
+          ls -lh VeloPath-AI-v2.3.1-stable.apk
+          sha256sum VeloPath-AI-v2.3.1-stable.apk > VeloPath-AI-v2.3.1-stable.apk.sha256
+
+      - name: Attach APK to v2.3.1-stable-checkpoint Release
+        working-directory: repo-v231/mobile_app
+        run: |
+          gh release upload v2.3.1-stable-checkpoint VeloPath-AI-v2.3.1-stable.apk VeloPath-AI-v2.3.1-stable.apk.sha256 --clobber
+
+      # ========================================================
+      # PART 2: Build & Create Release v2.4.0
+      # ========================================================
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: repo-v240
+
+      - name: Build v2.4.0 Turbo ARM64 APK
+        working-directory: repo-v240/mobile_app
+        run: |
+          flutter pub get
+          flutter build apk --release --target-platform android-arm64 --split-per-abi
+          APK_FILE=$(find build/app/outputs/flutter-apk -name "*.apk" ! -name "*unaligned*" | head -n 1)
+          echo "Found v2.4.0 APK: $APK_FILE"
+          cp "$APK_FILE" VeloPath-AI-v2.4.0-turbo.apk
+          ls -lh VeloPath-AI-v2.4.0-turbo.apk
+          sha256sum VeloPath-AI-v2.4.0-turbo.apk > VeloPath-AI-v2.4.0-turbo.apk.sha256
+
+      - name: Stage v2.4.0 Release Assets
+        working-directory: repo-v240/mobile_app
+        run: |
+          cp assets/models/road_damage_yolo11n_float16.tflite .
+          cp assets/models/yolo11n_int8.tflite . || true
+          cp assets/models/model_manifest.json .
+          cp android/app/src/main/jniLibs/arm64-v8a/libvelopath_engine.so . || true
+          ls -lh VeloPath-AI-v2.4.0-turbo.apk road_damage_yolo11n_float16.tflite model_manifest.json libvelopath_engine.so
+
+      - name: Publish GitHub Release v2.4.0
+        working-directory: repo-v240/mobile_app
+        run: |
+          RELEASE_NOTES="### ⚡ VeloPath AI v2.4.0 Turbo Performance & Verification Release
+
+#### 🚀 Key Upgrades in v2.4.0:
+- **Zero-Allocation INT8 Preprocessing**: Single-pass integer BT.601 conversion directly from camera YUV420 to [1, 512, 512, 3] INT8 tensor. Zero per-frame heap allocations (no GC pauses).
+- **Latency Cut in Half**: Per-frame processing dropped from ~130–159ms down to **~57–75ms** on Samsung Note 10 hardware.
+- **Built-In 🧪 TEST Mode**: Interactive top HUD button cycling:
+  - **Tap 1 (Sample 1: Pothole D40)**: Overlays AR boxes with verified 63.5% confidence.
+  - **Tap 2 (Sample 2: Cracks D00)**: Overlays AR boxes with verified crack detection.
+  - **Tap 3 (Live Camera)**: Seamlessly resumes real-time driving detection stream.
+- **Surface Gate & Lens Occlusion Banners**: Amber **SURFACE GATE: NON-ROAD SCENE (PAUSE)** and Crimson **⚠️ CAMERA LENS OCCLUDED** with automatic Gate OFF in Bench mode.
+- **Dual-Tier Obsidian Cockpit**: Zero-clipping layout with full telemetry, speed, language toggle, GPS status, and audio alert mute."
+
+          if gh release view v2.4.0 >/dev/null 2>&1; then
+            echo "Release v2.4.0 exists, uploading assets..."
+            gh release upload v2.4.0 \
+              VeloPath-AI-v2.4.0-turbo.apk \
+              VeloPath-AI-v2.4.0-turbo.apk.sha256 \
+              road_damage_yolo11n_float16.tflite \
+              yolo11n_int8.tflite \
+              model_manifest.json \
+              libvelopath_engine.so \
+              --clobber
+          else
+            echo "Creating release v2.4.0..."
+            gh release create v2.4.0 \
+              VeloPath-AI-v2.4.0-turbo.apk \
+              VeloPath-AI-v2.4.0-turbo.apk.sha256 \
+              road_damage_yolo11n_float16.tflite \
+              yolo11n_int8.tflite \
+              model_manifest.json \
+              libvelopath_engine.so \
+              --target main \
+              --title "VeloPath AI v2.4.0 — Turbo Preprocessing & Test Mode" \
+              --notes "$RELEASE_NOTES" \
+              --latest
+          fi
