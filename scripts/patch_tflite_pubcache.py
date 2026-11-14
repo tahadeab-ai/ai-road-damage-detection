@@ -62,8 +62,12 @@ def patch_pub_cache():
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     content = f.read()
+                # Remove any accidentally appended export at bottom
+                content = content.replace("\nexport 'src/bindings/tensorflow_lite_bindings_generated.dart';\n", "\n")
                 if "tensorflow_lite_bindings_generated.dart" not in content:
-                    new_content = content + "\nexport 'src/bindings/tensorflow_lite_bindings_generated.dart';\n"
+                    target = "export 'src/delegate.dart';"
+                    replacement = "export 'src/delegate.dart';\nexport 'src/bindings/tensorflow_lite_bindings_generated.dart';"
+                    new_content = content.replace(target, replacement)
                     with open(p, "w", encoding="utf-8") as f:
                         f.write(new_content)
                     print(f"Patched tflite_flutter.dart: {p}")
