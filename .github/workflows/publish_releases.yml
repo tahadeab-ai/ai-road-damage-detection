@@ -2,6 +2,9 @@ name: Cloud Release Builder & Publisher
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/publish_releases.yml'
 
 permissions:
   contents: write
