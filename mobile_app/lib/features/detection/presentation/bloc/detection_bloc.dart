@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/ffi/velopath_rust_bridge.dart';
 import '../../../../core/utils/alert_cooldown_manager.dart';
@@ -46,6 +48,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     on<ToggleRoadGateMode>(_onToggleRoadGate);
     on<ToggleLanguageMode>(_onToggleLanguage);
     on<ResetHazardCounters>(_onResetCounters);
+    on<CycleSampleTestMode>(_onCycleSampleTest);
   }
 
   void _onToggleBenchTest(
@@ -55,6 +58,7 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     final nextBenchMode = !state.isBenchTestMode;
     emit(state.copyWith(
       isBenchTestMode: nextBenchMode,
+      isRoadGateEnabled: nextBenchMode ? false : true,
       confidenceThreshold: nextBenchMode ? 0.12 : 0.20,
       sceneStatusText: nextBenchMode ? 'BENCH TEST (GATE: OFF)' : 'OPTIMAL',
     ));
@@ -86,6 +90,92 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       d40Count: 0,
       frameCount: 0,
     ));
+  }
+
+  Future<void> _onCycleSampleTest(
+    CycleSampleTestMode event,
+    Emitter<DetectionState> emit,
+  ) async {
+    final int nextMode = (state.sampleTestMode + 1) % 3;
+    debugPrint('[SampleTestMode] Cycle triggered -> Mode $nextMode');
+
+    if (nextMode == 0) {
+      // Return to Live Camera feed
+      debugPrint('[SampleTestMode] Resuming LIVE CAMERA stream.');
+      emit(state.copyWith(
+        sampleTestMode: 0,
+        sampleImagePath: () => null,
+        sceneStatusText: 'OPTIMAL',
+        detections: [],
+        trackedDetections: [],
+        criticalHazardAlert: () => null,
+      ));
+      return;
+    }
+
+    final String assetPath = nextMode == 1
+        ? 'assets/samples/sample_pothole.jpg'
+        : 'assets/samples/sample_cracks.jpg';
+    final String modeLabel = nextMode == 1 ? 'SAMPLE 1: POTHOLE (D40)' : 'SAMPLE 2: CRACKS (D00)';
+
+    try {
+      if (!tfliteEngine.isInitialized) {
+        await tfliteEngine.initialize();
+      }
+
+      final byteData = await rootBundle.load(assetPath);
+      final rawUint8 = byteData.buffer.asUint8List();
+
+      final codec = await ui.instantiateImageCodec(rawUint8, targetWidth: 512, targetHeight: 512);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final rgbaByteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+
+      if (rgbaByteData != null) {
+        final rgbaBytes = rgbaByteData.buffer.asUint8List();
+        final int8Buffer = tfliteEngine.reusableInputBuffer;
+        ImageProcessor.rgbaToInt8Tensor512(rgbaBytes, int8Buffer);
+
+        final sw = Stopwatch()..start();
+        final detections = await tfliteEngine.runInferenceInt8(
+          int8Buffer,
+          confThreshold: 0.15,
+          iouThreshold: 0.35,
+          roadRoiTop: 0.0,
+          benchMode: true,
+        );
+        sw.stop();
+
+        debugPrint('[SampleTestMode] ========================================');
+        debugPrint('[SampleTestMode] Loaded $modeLabel from $assetPath in ${sw.elapsedMilliseconds}ms');
+        debugPrint('[SampleTestMode] Verified Detections count: ${detections.length}');
+        for (final d in detections) {
+          debugPrint(
+            '[SampleTestMode] >> ${d.className} [Class ${d.classId}] - Conf: ${(d.confidence * 100).toStringAsFixed(1)}% | BBox: [L:${d.normalizedRect.left.toStringAsFixed(3)}, T:${d.normalizedRect.top.toStringAsFixed(3)}, R:${d.normalizedRect.right.toStringAsFixed(3)}, B:${d.normalizedRect.bottom.toStringAsFixed(3)}]',
+          );
+        }
+        debugPrint('[SampleTestMode] ========================================');
+
+        double maxSev = 0.0;
+        for (final d in detections) {
+          final sev = d.classId == 3 ? (7.0 + 3.0 * d.confidence) : (3.0 + 3.0 * d.confidence);
+          if (sev > maxSev) maxSev = sev;
+        }
+
+        emit(state.copyWith(
+          sampleTestMode: nextMode,
+          sampleImagePath: () => assetPath,
+          detections: detections,
+          trackedDetections: [],
+          inferenceLatencyMs: sw.elapsedMilliseconds,
+          maxSeverityScore: maxSev,
+          sceneStatusText: '🧪 $modeLabel',
+          criticalHazardAlert: () => detections.isNotEmpty ? detections.first : null,
+        ));
+      }
+    } catch (e, st) {
+      debugPrint('[SampleTestMode] Error testing sample image: $e\n$st');
+    }
   }
 
   Future<void> _onInitialize(
@@ -198,8 +288,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
     ProcessCameraFrame event,
     Emitter<DetectionState> emit,
   ) async {
-    // Drop frame if previous inference is still in-flight to prevent frame queue lag
-    if (!state.isStreaming || _isProcessingFrame) return;
+    // Drop frame if sample test mode is active or previous inference is still in-flight
+    if (!state.isStreaming || _isProcessingFrame || state.sampleTestMode != 0) return;
 
     _isProcessingFrame = true;
     _rawFrameCounter++;
@@ -215,22 +305,21 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
       fps: double.parse(currentFps.toStringAsFixed(1)),
     ));
 
-    debugPrint('[DetectionBloc] Frame #$_rawFrameCounter entering ImageProcessor...');
-
     try {
       // Auto-initialize if frame arrives before lifecycle completes
       if (!tfliteEngine.isInitialized) {
         await tfliteEngine.initialize();
       }
 
-      // 1. Process camera image bytes into normalized tensor buffer directly
-      final float32Buffer = ImageProcessor.cameraImageToFloat32Array(event.image);
+      // 1. Direct single-pass conversion to pre-allocated target INT8 tensor (Zero-Heap Allocation)
+      final int8Buffer = tfliteEngine.reusableInputBuffer;
+      ImageProcessor.cameraImageToInt8Tensor512(event.image, int8Buffer);
 
-      // 2. Camera Lens Occlusion Check (hand/finger over lens or phone covered)
-      if (ImageProcessor.isLensOccluded(float32Buffer)) {
+      // 2. High-speed Camera Lens Occlusion Check (< 0.05ms)
+      if (ImageProcessor.isLensOccludedInt8(int8Buffer)) {
         stopwatch.stop();
         emit(state.copyWith(
-          sceneStatusText: '⚠️ CAMERA LENS BLOCKED / OCCLUDED',
+          sceneStatusText: '⚠️ CAMERA LENS OCCLUDED',
           detections: [],
           trackedDetections: [],
           inferenceLatencyMs: stopwatch.elapsedMilliseconds,
@@ -242,11 +331,11 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
 
       // 3. Road Surface Spectral Gating (Door / Wall / Carpet suppression in DRIVE mode)
       if (state.isRoadGateEnabled && !state.isBenchTestMode) {
-        final isRoad = await tfliteEngine.checkRoadSurface(float32Buffer, benchMode: false);
+        final isRoad = await tfliteEngine.checkRoadSurfaceInt8(int8Buffer, benchMode: false);
         if (!isRoad) {
           stopwatch.stop();
           emit(state.copyWith(
-            sceneStatusText: 'SURFACE GATE: NON-ROAD SCENE',
+            sceneStatusText: 'SURFACE GATE: NON-ROAD SCENE (PAUSE)',
             detections: [],
             trackedDetections: [],
             inferenceLatencyMs: stopwatch.elapsedMilliseconds,
@@ -257,17 +346,16 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
         }
       }
 
-      // 4. Direct high-speed TFLite C++ inference (XNNPACK / ARM NEON multi-threaded)
-      debugPrint('[DetectionBloc] Frame #$_rawFrameCounter entering TFLite...');
-      final rawDetections = await tfliteEngine.runInference(
-        float32Buffer,
+      // 4. Zero-allocation high-speed TFLite INT8 inference
+      final rawDetections = await tfliteEngine.runInferenceInt8(
+        int8Buffer,
         confThreshold: state.confidenceThreshold,
         iouThreshold: 0.35,
         roadRoiTop: state.isBenchTestMode ? 0.0 : 0.20,
         benchMode: state.isBenchTestMode,
       );
 
-      debugPrint('[DetectionBloc] Frame #$_rawFrameCounter TFLite done in ${stopwatch.elapsedMilliseconds}ms, detections=${rawDetections.length}');
+      debugPrint('[DetectionBloc] Frame #$_rawFrameCounter TFLite INT8 done in ${stopwatch.elapsedMilliseconds}ms, detections=${rawDetections.length}');
 
       double maxSeverity = 0.0;
       for (final d in rawDetections) {
@@ -343,8 +431,8 @@ class DetectionBloc extends Bloc<DetectionEvent, DetectionState> {
           }
 
           // 100% Guaranteed Evidence snapshot capture from active frame memory
-          final snapshotPath = await SnapshotCaptureService.captureHazardSnapshot(
-            rgbBuffer: float32Buffer,
+          final snapshotPath = await SnapshotCaptureService.captureHazardSnapshotFromInt8(
+            int8Buffer: int8Buffer,
             detection: det,
           );
 

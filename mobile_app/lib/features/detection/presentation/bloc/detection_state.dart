@@ -31,6 +31,8 @@ class DetectionState extends Equatable {
   final int d40Count;
   final int pendingSyncCount;
   final int frameCount;
+  final int sampleTestMode; // 0: Live camera, 1: Sample 1 (Pothole D40), 2: Sample 2 (Cracks D00/D20)
+  final String? sampleImagePath;
   final String? lastPipelineError;
   final Failure? failure;
 
@@ -61,6 +63,8 @@ class DetectionState extends Equatable {
     this.d40Count = 0,
     this.pendingSyncCount = 0,
     this.frameCount = 0,
+    this.sampleTestMode = 0,
+    this.sampleImagePath,
     this.lastPipelineError,
     this.failure,
   });
@@ -96,6 +100,8 @@ class DetectionState extends Equatable {
       d40Count: 0,
       pendingSyncCount: 0,
       frameCount: 0,
+      sampleTestMode: 0,
+      sampleImagePath: null,
       lastPipelineError: null,
       failure: null,
     );
@@ -128,6 +134,8 @@ class DetectionState extends Equatable {
     int? d40Count,
     int? pendingSyncCount,
     int? frameCount,
+    int? sampleTestMode,
+    String? Function()? sampleImagePath,
     String? Function()? lastPipelineError,
     Failure? failure,
   }) {
@@ -158,6 +166,8 @@ class DetectionState extends Equatable {
       d40Count: d40Count ?? this.d40Count,
       pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
       frameCount: frameCount ?? this.frameCount,
+      sampleTestMode: sampleTestMode ?? this.sampleTestMode,
+      sampleImagePath: sampleImagePath != null ? sampleImagePath() : this.sampleImagePath,
       lastPipelineError: lastPipelineError != null ? lastPipelineError() : this.lastPipelineError,
       failure: failure ?? this.failure,
     );
@@ -191,6 +201,8 @@ class DetectionState extends Equatable {
         d40Count,
         pendingSyncCount,
         frameCount,
+        sampleTestMode,
+        sampleImagePath,
         lastPipelineError,
         failure,
       ];

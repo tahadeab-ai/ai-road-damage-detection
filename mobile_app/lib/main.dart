@@ -13,6 +13,7 @@ import 'features/history/data/repositories/hazard_repository.dart';
 import 'features/telemetry/services/gps_service.dart';
 
 void main() {
+  debugPrint = (String? message, {int? wrapWidth}) => print(message);
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 

@@ -200,6 +200,12 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
     }
   }
 
+  double _getSampleAspectRatio(int mode) {
+    if (mode == 1) return 408.0 / 271.0; // sample_pothole.jpg (408x271)
+    if (mode == 2) return 1.0; // sample_cracks.jpg (640x640)
+    return 9.0 / 16.0;
+  }
+
   double _getPreviewAspectRatio(BuildContext context) {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return 9.0 / 16.0;
@@ -256,50 +262,83 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
                 return Stack(
                   fit: StackFit.expand,
                   children: [
-                    // 1. Fullscreen Camera Viewport with BoxFit.cover
-                    if (_isCameraReady && _cameraController != null)
-                      ClipRect(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final screenAspect = constraints.maxWidth / constraints.maxHeight;
-                            double scale = 1.0;
-                            if (screenAspect > previewAspect) {
-                              scale = screenAspect / previewAspect;
-                            } else {
-                              scale = previewAspect / screenAspect;
-                            }
-
-                            return Transform.scale(
-                              scale: scale,
-                              child: Center(
-                                child: AspectRatio(
-                                  aspectRatio: previewAspect,
-                                  child: CameraPreview(_cameraController!),
-                                ),
+                    // 1. Viewport: Sample Image Viewport OR Live Camera Viewport
+                    if (state.sampleTestMode > 0 && state.sampleImagePath != null)
+                      Center(
+                        child: AspectRatio(
+                          aspectRatio: _getSampleAspectRatio(state.sampleTestMode),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.asset(
+                                state.sampleImagePath!,
+                                fit: BoxFit.fill,
                               ),
-                            );
-                          },
+                              AnimatedBuilder(
+                                animation: _animController,
+                                builder: (context, _) {
+                                  return CustomPaint(
+                                    painter: BBoxOverlayPainter(
+                                      trackedDetections: [],
+                                      fallbackDetections: state.detections,
+                                      animationValue: _animController.value,
+                                      cameraAspectRatio: null, // 100% pixel-perfect scaling over sample image
+                                      roadRoiTop: 0.0,
+                                      isRoadDetected: true,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       )
-                    else
-                      _buildSimulationCameraViewport(),
+                    else ...[
+                      // Fullscreen Camera Viewport with BoxFit.cover
+                      if (_isCameraReady && _cameraController != null)
+                        ClipRect(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final screenAspect = constraints.maxWidth / constraints.maxHeight;
+                              double scale = 1.0;
+                              if (screenAspect > previewAspect) {
+                                scale = screenAspect / previewAspect;
+                              } else {
+                                scale = previewAspect / screenAspect;
+                              }
 
-                    // 2. Temporally Smoothed Bounding Box Overlay with Subpixel Geometry Alignment
-                    AnimatedBuilder(
-                      animation: _animController,
-                      builder: (context, _) {
-                        return CustomPaint(
-                          painter: BBoxOverlayPainter(
-                            trackedDetections: state.isStreaming ? state.trackedDetections : [],
-                            fallbackDetections: state.isStreaming ? state.detections : [],
-                            animationValue: _animController.value,
-                            cameraAspectRatio: previewAspect,
-                            roadRoiTop: state.isBenchTestMode ? 0.0 : 0.25,
-                            isRoadDetected: state.isRoadDetected || state.isBenchTestMode || !state.isRoadGateEnabled,
+                              return Transform.scale(
+                                scale: scale,
+                                child: Center(
+                                  child: AspectRatio(
+                                    aspectRatio: previewAspect,
+                                    child: CameraPreview(_cameraController!),
+                                  ),
+                                ),
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
+                        )
+                      else
+                        _buildSimulationCameraViewport(),
+
+                      // Temporally Smoothed Bounding Box Overlay with Subpixel Geometry Alignment
+                      AnimatedBuilder(
+                        animation: _animController,
+                        builder: (context, _) {
+                          return CustomPaint(
+                            painter: BBoxOverlayPainter(
+                              trackedDetections: state.isStreaming ? state.trackedDetections : [],
+                              fallbackDetections: state.isStreaming ? state.detections : [],
+                              animationValue: _animController.value,
+                              cameraAspectRatio: previewAspect,
+                              roadRoiTop: state.isBenchTestMode ? 0.0 : 0.25,
+                              isRoadDetected: state.isRoadDetected || state.isBenchTestMode || !state.isRoadGateEnabled,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
 
                     // 3. Automotive Heads-Up Display (HUD)
                     CameraHudOverlay(
@@ -320,6 +359,9 @@ class _DrivingDetectorScreenState extends State<DrivingDetectorScreen>
                       },
                       onToggleRoadGate: () {
                         context.read<DetectionBloc>().add(ToggleRoadGateMode());
+                      },
+                      onCycleSampleTest: () {
+                        context.read<DetectionBloc>().add(CycleSampleTestMode());
                       },
                       onOpenHistory: () {
                         Navigator.of(context).push(

@@ -60,3 +60,5 @@ class ToggleRoadGateMode extends DetectionEvent {}
 class ToggleLanguageMode extends DetectionEvent {}
 
 class ResetHazardCounters extends DetectionEvent {}
+
+class CycleSampleTestMode extends DetectionEvent {}

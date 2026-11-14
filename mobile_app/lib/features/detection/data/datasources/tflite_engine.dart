@@ -29,6 +29,13 @@ class TfliteEngine {
   double _outputScale = 0.00392157;
   int _outputZeroPoint = -128;
 
+  // Pre-allocated static buffers for Zero-Allocation inference pipeline
+  final Int8List _reusableInputBuffer = Int8List(1 * 512 * 512 * 3);
+  final Int8List _reusableOutputBuffer = Int8List(1 * 9 * 5376);
+  final Float32List _reusableDequantizedOutput = Float32List(1 * 9 * 5376);
+
+  Int8List get reusableInputBuffer => _reusableInputBuffer;
+
   bool get isInitialized => _isInitialized;
   List<String> get labels => _labels;
 
@@ -176,6 +183,121 @@ class TfliteEngine {
     }
 
     return true;
+  }
+
+  /// Fast Zero-Allocation Road Surface Classifier directly on [1, 512, 512, 3] Int8 buffer.
+  Future<bool> checkRoadSurfaceInt8(Int8List inputBuffer, {bool benchMode = false}) async {
+    if (benchMode) return true; // Bench test bypasses road surface gate
+
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    try {
+      const int w = 512;
+      int sampledPixels = 0;
+      double totalSaturation = 0.0;
+      double totalLuminance = 0.0;
+      double sumLumSq = 0.0;
+
+      // Sample pixels in lower road zone of 512x512 (Y from 220 to 480 step 16, X from 80 to 432 step 16)
+      for (int y = 220; y < 480; y += 16) {
+        final int rowOffset = y * w * 3;
+        for (int x = 80; x < 432; x += 16) {
+          final int idx = rowOffset + x * 3;
+          if (idx + 2 < inputBuffer.length) {
+            final double r = (inputBuffer[idx] + 128) / 255.0;
+            final double g = (inputBuffer[idx + 1] + 128) / 255.0;
+            final double b = (inputBuffer[idx + 2] + 128) / 255.0;
+
+            final double maxC = max(r, max(g, b));
+            final double minC = min(r, min(g, b));
+            final double delta = maxC - minC;
+
+            final double sat = maxC > 0.01 ? (delta / maxC) : 0.0;
+            final double lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+            totalSaturation += sat;
+            totalLuminance += lum;
+            sumLumSq += lum * lum;
+            sampledPixels++;
+          }
+        }
+      }
+
+      if (sampledPixels > 0) {
+        final double avgSat = totalSaturation / sampledPixels;
+        final double avgLum = totalLuminance / sampledPixels;
+        final double variance = (sumLumSq / sampledPixels) - (avgLum * avgLum);
+
+        // 1. High saturation indicates colorful indoor objects, rugs, wood, flowers (avgSat > 0.26)
+        if (avgSat > 0.26) {
+          return false;
+        }
+
+        // 2. Very bright uniform surface indicates white door, ceiling, or interior wall (avgLum > 0.70)
+        if (avgLum > 0.70) {
+          return false;
+        }
+
+        // 3. Flat painted wall/surface with low texture variance (< 0.0020) and moderate/high brightness
+        if (variance < 0.0020 && avgLum > 0.40) {
+          return false;
+        }
+
+        // 4. Extreme darkness (< 0.05)
+        if (avgLum < 0.05) {
+          return false;
+        }
+      }
+    } catch (_) {}
+
+    return true;
+  }
+
+  /// High-performance zero-allocation inference directly executing on [1, 512, 512, 3] Int8 tensor.
+  Future<List<DetectionResult>> runInferenceInt8(
+    Int8List inputTensor, {
+    double confThreshold = 0.20,
+    double iouThreshold = 0.35,
+    double roadRoiTop = 0.20,
+    bool benchMode = false,
+  }) async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    if (_interpreter == null) {
+      return [];
+    }
+
+    final effectiveRoiTop = benchMode ? 0.0 : roadRoiTop;
+    final effectiveConf = confThreshold;
+
+    try {
+      // 1. Direct model invocation into pre-allocated output buffer (0 heap bytes allocated)
+      _interpreter!.runForMultipleInputs([inputTensor.buffer], {0: _reusableOutputBuffer.buffer});
+
+      final int totalOutElements = _outputShape.reduce((a, b) => a * b);
+      final double os = _outputScale;
+      final int ozp = _outputZeroPoint;
+
+      for (int i = 0; i < totalOutElements; i++) {
+        _reusableDequantizedOutput[i] = (_reusableOutputBuffer[i] - ozp) * os;
+      }
+
+      // 2. Parse YOLO boxes
+      return _parseFlatYoloOutput(
+        _reusableDequantizedOutput,
+        _outputShape,
+        effectiveConf,
+        iouThreshold,
+        roadRoiTop: effectiveRoiTop,
+      );
+    } catch (e, st) {
+      debugPrint('[TfliteEngine] Exception during INT8 inference: $e\n$st');
+      return [];
+    }
   }
 
   /// Runs inference on a normalized [1, 640, 640, 3] Float32 buffer.

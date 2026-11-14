@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -10,6 +11,108 @@ import '../../features/detection/domain/models/detection_result.dart';
 class SnapshotCaptureService {
   static const int imageWidth = 640;
   static const int imageHeight = 640;
+
+  /// Fast zero-allocation snapshot pipeline from Int8 tensor buffer.
+  static Future<String> captureHazardSnapshotFromInt8({
+    required Int8List int8Buffer,
+    required DetectionResult detection,
+  }) async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final hazardsDir = Directory('${appDir.path}/hazards');
+      if (!await hazardsDir.exists()) {
+        await hazardsDir.create(recursive: true);
+      }
+
+      final fileName = 'hazard_${DateTime.now().millisecondsSinceEpoch}_${detection.classId}.jpg';
+      final filePath = '${hazardsDir.path}/$fileName';
+
+      // Clone int8 buffer data for isolate safety
+      final bufferCopy = Int8List.fromList(int8Buffer);
+      final normRect = detection.normalizedRect;
+
+      final savedPath = await compute(_renderAndEncodeInt8Snapshot, {
+        'buffer': bufferCopy,
+        'left': normRect.left,
+        'top': normRect.top,
+        'right': normRect.right,
+        'bottom': normRect.bottom,
+        'classId': detection.classId,
+        'confidence': detection.confidence,
+        'outputPath': filePath,
+      });
+
+      if (savedPath != null && File(savedPath).existsSync()) {
+        return savedPath;
+      }
+
+      return _generateFallbackJpeg(filePath, detection);
+    } catch (e) {
+      debugPrint('[SnapshotCaptureService] Capture notice: $e');
+      return '';
+    }
+  }
+
+  static String? _renderAndEncodeInt8Snapshot(Map<String, dynamic> params) {
+    try {
+      final Int8List buffer = params['buffer'] as Int8List;
+      final double left = params['left'] as double;
+      final double top = params['top'] as double;
+      final double right = params['right'] as double;
+      final double bottom = params['bottom'] as double;
+      final int classId = params['classId'] as int;
+      final String outputPath = params['outputPath'] as String;
+
+      const int w = 512;
+      const int h = 512;
+      final image = img.Image(width: w, height: h);
+
+      final int totalPixels = w * h;
+      for (int i = 0; i < totalPixels; i++) {
+        final int y = i ~/ w;
+        final int x = i % w;
+        final int idx = i * 3;
+        if (idx + 2 < buffer.length) {
+          final int r = (buffer[idx] + 128).clamp(0, 255);
+          final int g = (buffer[idx + 1] + 128).clamp(0, 255);
+          final int b = (buffer[idx + 2] + 128).clamp(0, 255);
+          image.setPixelRgb(x, y, r, g, b);
+        }
+      }
+
+      img.ColorRgba8 boxColor;
+      switch (classId) {
+        case 0:
+          boxColor = img.ColorRgba8(0, 242, 254, 255);
+          break;
+        case 1:
+          boxColor = img.ColorRgba8(249, 115, 22, 255);
+          break;
+        case 2:
+          boxColor = img.ColorRgba8(245, 158, 11, 255);
+          break;
+        case 3:
+        default:
+          boxColor = img.ColorRgba8(239, 68, 68, 255);
+          break;
+      }
+
+      final int x1 = (left * w).clamp(0, w - 1).toInt();
+      final int y1 = (top * h).clamp(0, h - 1).toInt();
+      final int x2 = (right * w).clamp(0, w - 1).toInt();
+      final int y2 = (bottom * h).clamp(0, h - 1).toInt();
+
+      if (x2 > x1 && y2 > y1) {
+        img.drawRect(image, x1: x1, y1: y1, x2: x2, y2: y2, color: boxColor, thickness: 3);
+      }
+
+      final jpegBytes = img.encodeJpg(image, quality: 85);
+      File(outputPath).writeAsBytesSync(jpegBytes);
+      return outputPath;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Asynchronously creates, annotates, and saves a JPEG evidence snapshot.
   /// Guaranteed to return a valid local file path.

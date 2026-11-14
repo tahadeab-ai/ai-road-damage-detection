@@ -14,6 +14,7 @@ class CameraHudOverlay extends StatelessWidget {
   final VoidCallback onOpenAnalytics;
   final VoidCallback onToggleBenchMode;
   final VoidCallback onToggleRoadGate;
+  final VoidCallback onCycleSampleTest;
 
   const CameraHudOverlay({
     super.key,
@@ -25,6 +26,7 @@ class CameraHudOverlay extends StatelessWidget {
     required this.onOpenAnalytics,
     required this.onToggleBenchMode,
     required this.onToggleRoadGate,
+    required this.onCycleSampleTest,
   });
 
   @override
@@ -78,13 +80,13 @@ class CameraHudOverlay extends StatelessWidget {
     final bool isBench = state.isBenchTestMode;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(20),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: const Color(0xE60B0F17), // Deep Obsidian Glass
               borderRadius: BorderRadius.circular(20),
@@ -102,240 +104,273 @@ class CameraHudOverlay extends StatelessWidget {
                 ),
               ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // Left: Digital Speedometer + Mode Toggle Chip
-                Expanded(
-                  flex: 3,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Speedometer Icon & Value
-                      Icon(
-                        Icons.speed_rounded,
-                        color: isBench ? AppColors.warning : AppColors.laserCyan,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 4),
-                      RichText(
-                        text: TextSpan(
-                          children: [
-                            TextSpan(
-                              text: state.gpsData.speedKmh.toStringAsFixed(0),
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                                fontFamily: 'monospace',
-                              ),
-                            ),
-                            const TextSpan(
-                              text: ' KM/H',
-                              style: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
+                // Upper Cockpit Row: Speedometer + Mode + TEST & Quick Controls
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Left: Digital Speedometer + Mode Toggle Chip + Sample Test Button
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Speedometer Icon & Value
+                        Icon(
+                          Icons.speed_rounded,
+                          color: isBench ? AppColors.warning : AppColors.laserCyan,
+                          size: 18,
                         ),
-                      ),
-                      const SizedBox(width: 6),
-
-                      // Interactive Mode Toggle Chip: DRIVE vs BENCH TEST
-                      GestureDetector(
-                        onTap: onToggleBenchMode,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 250),
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: isBench
-                                ? AppColors.laserCyan.withValues(alpha: 0.25)
-                                : (state.isLowSpeed
-                                    ? AppColors.warning.withValues(alpha: 0.20)
-                                    : AppColors.surfaceLight),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: isBench
-                                  ? AppColors.laserCyan
-                                  : (state.isLowSpeed ? AppColors.warning : AppColors.border),
-                              width: 1.0,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
+                        const SizedBox(width: 3),
+                        RichText(
+                          text: TextSpan(
                             children: [
-                              Container(
-                                width: 5,
-                                height: 5,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: isBench
-                                      ? AppColors.laserCyan
-                                      : (state.isLowSpeed ? AppColors.warning : AppColors.successGps),
+                              TextSpan(
+                                text: state.gpsData.speedKmh.toStringAsFixed(0),
+                                style: const TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  fontFamily: 'monospace',
                                 ),
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                isBench
-                                    ? 'BENCH'
-                                    : (state.isLowSpeed ? 'STANDBY' : 'DRIVE'),
+                              const TextSpan(
+                                text: ' KM/H',
                                 style: TextStyle(
-                                  color: isBench
-                                      ? AppColors.laserCyan
-                                      : (state.isLowSpeed ? AppColors.warning : AppColors.textPrimary),
+                                  color: AppColors.textSecondary,
                                   fontSize: 8.5,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0.4,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
+                        const SizedBox(width: 6),
 
-                // Center: Live AI Engine Core Badge
-                Expanded(
-                  flex: 4,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF1E2838), Color(0xFF151C28)],
-                          ),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: state.isNativeRustEngine
-                                ? AppColors.laserCyan.withValues(alpha: 0.6)
-                                : AppColors.border,
-                            width: 0.8,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.memory_rounded,
-                              size: 11,
-                              color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.warning,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              state.isNativeRustEngine
-                                  ? 'RUST SIMD + YOLO11n INT8'
-                                  : 'DART + YOLO11n INT8',
-                              style: TextStyle(
-                                color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.textPrimary,
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.4,
+                        // Interactive Mode Toggle Chip: DRIVE vs BENCH TEST
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onToggleBenchMode,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isBench
+                                  ? AppColors.laserCyan.withValues(alpha: 0.25)
+                                  : (state.isLowSpeed
+                                      ? AppColors.warning.withValues(alpha: 0.20)
+                                      : AppColors.surfaceLight),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isBench
+                                    ? AppColors.laserCyan
+                                    : (state.isLowSpeed ? AppColors.warning : AppColors.border),
+                                width: 1.0,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: state.frameCount % 2 == 0 ? AppColors.successGps : AppColors.successGps.withValues(alpha: 0.35),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppColors.successGps.withValues(alpha: 0.8),
-                                  blurRadius: 4,
-                                  spreadRadius: 1,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isBench
+                                        ? AppColors.laserCyan
+                                        : (state.isLowSpeed ? AppColors.warning : AppColors.successGps),
+                                  ),
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  isBench
+                                      ? 'BENCH'
+                                      : (state.isLowSpeed ? 'STANDBY' : 'DRIVE'),
+                                  style: TextStyle(
+                                    color: isBench
+                                        ? AppColors.laserCyan
+                                        : (state.isLowSpeed ? AppColors.warning : AppColors.textPrimary),
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 0.4,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 5),
+                        ),
+
+                        const SizedBox(width: 5),
+
+                        // Interactive 🧪 TEST Button (Cycles Sample 1 -> Sample 2 -> Live Camera)
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onCycleSampleTest,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: state.sampleTestMode > 0
+                                  ? AppColors.laserCyan.withValues(alpha: 0.35)
+                                  : AppColors.surfaceLight,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: state.sampleTestMode > 0 ? AppColors.laserCyan : AppColors.border,
+                                width: 1.0,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  state.sampleTestMode == 1
+                                      ? '🧪 S1:POTHOLE'
+                                      : (state.sampleTestMode == 2 ? '🧪 S2:CRACKS' : '🧪 TEST'),
+                                  style: TextStyle(
+                                    color: state.sampleTestMode > 0 ? AppColors.laserCyan : AppColors.textPrimary,
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // Right: Language Switch & Audio Alert Mute
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        // Quick Language Switcher Button (AR / EN)
+                        GestureDetector(
+                          onTap: () => AppLanguageNotifier.instance.toggleLanguage(),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppColors.laserCyan.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: AppColors.laserCyan, width: 0.8),
+                            ),
+                            child: Text(
+                              AppStrings.languageToggleLabel,
+                              style: const TextStyle(
+                                color: AppColors.laserCyan,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+
+                        // GPS Indicator
+                        Icon(
+                          state.gpsData.isGpsLocked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
+                          color: state.gpsData.isGpsLocked ? AppColors.successGps : AppColors.warning,
+                          size: 15,
+                        ),
+                        const SizedBox(width: 6),
+
+                        // HUD Audio Mute Toggle Button
+                        GestureDetector(
+                          onTap: onToggleMute,
+                          child: Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color: state.isMuted
+                                  ? AppColors.error.withValues(alpha: 0.25)
+                                  : AppColors.surfaceLight,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: state.isMuted ? AppColors.error : AppColors.border,
+                                width: 0.8,
+                              ),
+                            ),
+                            child: Icon(
+                              state.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                              color: state.isMuted ? AppColors.error : AppColors.laserCyan,
+                              size: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 5),
+
+                // Lower Cockpit Row: Live AI Engine Core Badge + FPS & Latency
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF1E2838), Color(0xFF151C28)],
+                        ),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: state.isNativeRustEngine
+                              ? AppColors.laserCyan.withValues(alpha: 0.6)
+                              : AppColors.border,
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.memory_rounded,
+                            size: 11,
+                            color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.warning,
+                          ),
+                          const SizedBox(width: 4),
                           Text(
-                            '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS • F#${state.frameCount}',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'monospace',
+                            state.isNativeRustEngine
+                                ? 'RUST SIMD + YOLO11n INT8'
+                                : 'DART + YOLO11n INT8',
+                            style: TextStyle(
+                              color: state.isNativeRustEngine ? AppColors.laserCyan : AppColors.textPrimary,
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.4,
                             ),
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
-
-                // Right: Language Switch & Audio Alert Mute
-                Expanded(
-                  flex: 3,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      // Quick Language Switcher Button (AR / EN)
-                      GestureDetector(
-                        onTap: () => AppLanguageNotifier.instance.toggleLanguage(),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.laserCyan.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: AppColors.laserCyan, width: 0.8),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: state.frameCount % 2 == 0 ? AppColors.successGps : AppColors.successGps.withValues(alpha: 0.35),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.successGps.withValues(alpha: 0.8),
+                            blurRadius: 4,
+                            spreadRadius: 1,
                           ),
-                          child: Text(
-                            AppStrings.languageToggleLabel,
-                            style: const TextStyle(
-                              color: AppColors.laserCyan,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-
-                      // GPS Indicator
-                      Icon(
-                        state.gpsData.isGpsLocked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
-                        color: state.gpsData.isGpsLocked ? AppColors.successGps : AppColors.warning,
-                        size: 15,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      '${state.inferenceLatencyMs}ms • ${state.fps.toStringAsFixed(1)} FPS • F#${state.frameCount}',
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'monospace',
                       ),
-                      const SizedBox(width: 6),
-
-                      // HUD Audio Mute Toggle Button
-                      GestureDetector(
-                        onTap: onToggleMute,
-                        child: Container(
-                          padding: const EdgeInsets.all(5),
-                          decoration: BoxDecoration(
-                            color: state.isMuted
-                                ? AppColors.error.withValues(alpha: 0.25)
-                                : AppColors.surfaceLight,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: state.isMuted ? AppColors.error : AppColors.border,
-                              width: 0.8,
-                            ),
-                          ),
-                          child: Icon(
-                            state.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                            color: state.isMuted ? AppColors.error : AppColors.laserCyan,
-                            size: 14,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -389,25 +424,25 @@ class CameraHudOverlay extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xCC7F1D1D), // Dark Crimson Glass
+                color: const Color(0xCC78350F), // Deep Amber Glass
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.error, width: 1.2),
+                border: Border.all(color: AppColors.warning, width: 1.2),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.error.withValues(alpha: 0.35),
+                    color: AppColors.warning.withValues(alpha: 0.35),
                     blurRadius: 12,
                   ),
                 ],
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.sensor_occupied_rounded, color: Colors.white, size: 18),
+                  const Icon(Icons.fence_rounded, color: AppColors.warning, size: 18),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       AppStrings.isArabic
                           ? 'بوابة السطح: المشهد غير مطابق للطريق (انقر لتفعيل وضع الفحص)'
-                          : 'SURFACE GATE: NON-ROAD SCENE (TAP FOR BENCH TEST)',
+                          : 'SURFACE GATE: NON-ROAD SCENE (PAUSE)',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -449,7 +484,19 @@ class CameraHudOverlay extends StatelessWidget {
     IconData statusIcon;
     Color statusColor;
 
-    if (state.isBenchTestMode) {
+    if (state.sceneStatusText.contains('OCCLUDED') || state.sceneStatusText.contains('BLOCKED')) {
+      statusText = '⚠️ CAMERA LENS OCCLUDED';
+      statusIcon = Icons.lens_blur_rounded;
+      statusColor = const Color(0xFFEF4444); // Crimson
+    } else if (state.sceneStatusText.contains('SURFACE GATE') || state.sceneStatusText.contains('NON-ROAD')) {
+      statusText = 'SURFACE GATE: NON-ROAD SCENE (PAUSE)';
+      statusIcon = Icons.fence_rounded;
+      statusColor = AppColors.warning; // Amber
+    } else if (state.sampleTestMode > 0) {
+      statusText = state.sceneStatusText;
+      statusIcon = Icons.science_rounded;
+      statusColor = AppColors.laserCyan;
+    } else if (state.isBenchTestMode) {
       statusText = 'BENCH TEST MODE ACTIVE (OVERRIDE)';
       statusIcon = Icons.science_outlined;
       statusColor = AppColors.laserCyan;

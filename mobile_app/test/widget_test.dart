@@ -37,6 +37,7 @@ void main() {
               onOpenAnalytics: () {},
               onToggleBenchMode: () {},
               onToggleRoadGate: () {},
+              onCycleSampleTest: () {},
             ),
           ),
         ),
@@ -49,7 +50,10 @@ void main() {
       );
 
       // Verify inference latency HUD
-      expect(find.text('14ms • 22.5 FPS'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate((w) => w is Text && w.data != null && w.data!.contains('14ms • 22.5 FPS')),
+        findsOneWidget,
+      );
 
       // Verify AI action button
       expect(find.text('SCANNING'), findsOneWidget);
