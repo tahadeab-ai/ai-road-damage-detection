@@ -87,17 +87,19 @@ jobs:
       - name: Publish GitHub Release v2.4.0
         working-directory: repo-v240/mobile_app
         run: |
-          RELEASE_NOTES="### ⚡ VeloPath AI v2.4.0 Turbo Performance & Verification Release
+          cat << 'EOF' > release_notes.md
+          ### ⚡ VeloPath AI v2.4.0 Turbo Performance & Verification Release
 
-#### 🚀 Key Upgrades in v2.4.0:
-- **Zero-Allocation INT8 Preprocessing**: Single-pass integer BT.601 conversion directly from camera YUV420 to [1, 512, 512, 3] INT8 tensor. Zero per-frame heap allocations (no GC pauses).
-- **Latency Cut in Half**: Per-frame processing dropped from ~130–159ms down to **~57–75ms** on Samsung Note 10 hardware.
-- **Built-In 🧪 TEST Mode**: Interactive top HUD button cycling:
-  - **Tap 1 (Sample 1: Pothole D40)**: Overlays AR boxes with verified 63.5% confidence.
-  - **Tap 2 (Sample 2: Cracks D00)**: Overlays AR boxes with verified crack detection.
-  - **Tap 3 (Live Camera)**: Seamlessly resumes real-time driving detection stream.
-- **Surface Gate & Lens Occlusion Banners**: Amber **SURFACE GATE: NON-ROAD SCENE (PAUSE)** and Crimson **⚠️ CAMERA LENS OCCLUDED** with automatic Gate OFF in Bench mode.
-- **Dual-Tier Obsidian Cockpit**: Zero-clipping layout with full telemetry, speed, language toggle, GPS status, and audio alert mute."
+          #### 🚀 Key Upgrades in v2.4.0:
+          - **Zero-Allocation INT8 Preprocessing**: Single-pass integer BT.601 conversion directly from camera YUV420 to target [1, 512, 512, 3] INT8 tensor. Zero per-frame heap allocations (no GC pauses).
+          - **Latency Cut in Half**: Per-frame processing dropped from ~130–159ms down to **~57–75ms** on Samsung Note 10 hardware.
+          - **Built-In 🧪 TEST Mode**: Interactive top HUD button cycling:
+            - **Tap 1 (Sample 1: Pothole D40)**: Overlays AR boxes with verified 63.5% confidence.
+            - **Tap 2 (Sample 2: Cracks D00)**: Overlays AR boxes with verified crack detection.
+            - **Tap 3 (Live Camera)**: Seamlessly resumes real-time driving detection stream.
+          - **Surface Gate & Lens Occlusion Banners**: Amber **SURFACE GATE: NON-ROAD SCENE (PAUSE)** and Crimson **⚠️ CAMERA LENS OCCLUDED** with automatic Gate OFF in Bench mode.
+          - **Dual-Tier Obsidian Cockpit**: Zero-clipping layout with full telemetry, speed, language toggle, GPS status, and audio alert mute.
+          EOF
 
           if gh release view v2.4.0 >/dev/null 2>&1; then
             echo "Release v2.4.0 exists, uploading assets..."
@@ -120,6 +122,6 @@ jobs:
               libvelopath_engine.so \
               --target main \
               --title "VeloPath AI v2.4.0 — Turbo Preprocessing & Test Mode" \
-              --notes "$RELEASE_NOTES" \
+              --notes-file release_notes.md \
               --latest
           fi
